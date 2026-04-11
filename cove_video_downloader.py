@@ -20,11 +20,24 @@ ORANGE_DIM  = "#cc8800"
 LOG_BG      = "#0f0e0d"
 
 def resource_path(relative):
+    """Resolve path to bundled resource — works both in dev and PyInstaller EXE."""
     try:
-        base = sys._MEIPASS
-    except Exception:
+        base = sys._MEIPASS  # PyInstaller temp extraction folder
+    except AttributeError:
         base = os.path.abspath(".")
     return os.path.join(base, relative)
+
+def get_tool(name):
+    """
+    Resolve a CLI tool (yt-dlp, HandBrakeCLI).
+    On Windows inside a bundled EXE, use the .exe from the bundle.
+    On Linux/Mac, fall back to the system PATH version.
+    """
+    if sys.platform == "win32":
+        bundled = resource_path(name + ".exe")
+        if os.path.exists(bundled):
+            return bundled
+    return name  # system PATH fallback (Linux / unbundled)
 
 def set_icon(root):
     try:
@@ -55,11 +68,14 @@ def download_videos():
         fail    = 0
         log_clear()
 
+        ytdlp_bin   = get_tool("yt-dlp")
+        hbcli_bin   = get_tool("HandBrakeCLI")
+
         for i, url in enumerate(urls, 1):
             try:
-                output_template = str(Path.cwd() / "%(title)s.%(ext)s")
+                output_template = str(Path.home() / "Downloads" / "%(title)s.%(ext)s")
                 cmd = [
-                    "yt-dlp",
+                    ytdlp_bin,
                     "-f", "bv*+ba/b",
                     "--merge-output-format", "mp4",
                     "-o", output_template,
@@ -72,9 +88,14 @@ def download_videos():
                 log_write(f"  [{i}/{len(urls)}] Downloading\n  {url}\n")
                 log_write(f"{'='*52}\n\n")
 
+                creationflags = 0
+                if sys.platform == "win32":
+                    creationflags = subprocess.CREATE_NO_WINDOW
+
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, text=True, bufsize=1,
+                    creationflags=creationflags,
                 )
 
                 downloaded_file = None
@@ -101,7 +122,7 @@ def download_videos():
                         log_write(f"Original: {orig_mb:.1f} MB\n")
 
                         hb_cmd = [
-                            "HandBrakeCLI",
+                            hbcli_bin,
                             "-i", downloaded_file, "-o", tmp_file,
                             "-e", "x265", "-q", "31.5",
                             "--encoder-preset", "fast",
@@ -110,6 +131,7 @@ def download_videos():
                         hb_proc = subprocess.Popen(
                             hb_cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1,
+                            creationflags=creationflags,
                         )
                         for hb_line in hb_proc.stdout:
                             log_write(hb_line.replace("\r", "\n"))
@@ -180,12 +202,10 @@ root.configure(bg=BG)
 root.resizable(True, True)
 set_icon(root)
 
-# ── Variables ──────────────────────────────────────────────────────────────
 browser_var  = tk.StringVar(value="None (Default)")
 compress_var = tk.BooleanVar(value=True)
 status_var   = tk.StringVar(value="")
 
-# ── Helper: styled label ───────────────────────────────────────────────────
 def lbl(parent, text, size=9, bold=False, color=TEXT, **kw):
     weight = "bold" if bold else "normal"
     return tk.Label(parent, text=text, bg=BG, fg=color,
@@ -203,18 +223,15 @@ def btn(parent, text, cmd, accent=False, **kw):
     b.bind("<Leave>", lambda e: b.config(bg=bg_c))
     return b
 
-# ── Layout ─────────────────────────────────────────────────────────────────
 outer = tk.Frame(root, bg=BG, padx=14, pady=12)
 outer.pack(fill=tk.BOTH, expand=True)
 
-# URL box header
 url_row = tk.Frame(outer, bg=BG)
 url_row.pack(fill=tk.X)
 lbl(url_row, "Video links:", bold=True).pack(side=tk.LEFT)
 btn(url_row, "Clear", clear_links).pack(side=tk.RIGHT)
 btn(url_row, "Paste", smart_paste).pack(side=tk.RIGHT, padx=(0, 6))
 
-# URL text area
 urls_text = tk.Text(
     outer, height=8,
     bg=SURFACE, fg=TEXT, insertbackground=ORANGE,
@@ -224,16 +241,12 @@ urls_text = tk.Text(
     highlightcolor=ORANGE,
 )
 urls_text.pack(fill=tk.X, pady=(6, 10))
-
 urls_text.bind("<Control-v>", handle_ctrl_v)
 urls_text.bind("<Control-V>", handle_ctrl_v)
 
-# Options row
 opts = tk.Frame(outer, bg=BG)
 opts.pack(fill=tk.X, pady=(0, 10))
-
 lbl(opts, "Unlock NSFW:").pack(side=tk.LEFT)
-
 browser_menu = tk.OptionMenu(
     opts, browser_var,
     "None (Default)", "Firefox", "Chrome", "Brave", "Chromium", "Edge",
@@ -241,8 +254,7 @@ browser_menu = tk.OptionMenu(
 browser_menu.config(
     bg=SURFACE2, fg=TEXT, activebackground=BORDER,
     activeforeground=ORANGE, relief=tk.FLAT,
-    font=("Consolas", 9), highlightthickness=0,
-    padx=8,
+    font=("Consolas", 9), highlightthickness=0, padx=8,
 )
 browser_menu["menu"].config(
     bg=SURFACE2, fg=TEXT, activebackground=BORDER, activeforeground=ORANGE,
@@ -260,12 +272,10 @@ compress_cb = tk.Checkbutton(
 )
 compress_cb.pack(side=tk.LEFT)
 
-# Download button
 download_btn = btn(outer, "⬇  Download", download_videos, accent=True)
 download_btn.config(font=("Consolas", 11, "bold"), pady=8)
 download_btn.pack(anchor="center", pady=(4, 10), ipadx=30)
 
-# Status line
 status_lbl = tk.Label(
     outer, textvariable=status_var,
     bg=BG, fg=TEXT_MUTED, anchor="w",
@@ -273,7 +283,6 @@ status_lbl = tk.Label(
 )
 status_lbl.pack(fill=tk.X, pady=(0, 6))
 
-# Log area
 lbl(outer, "Log:", bold=True).pack(anchor="w")
 
 log_text = tk.Text(
