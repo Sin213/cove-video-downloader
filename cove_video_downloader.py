@@ -46,8 +46,6 @@ def get_tool(name):
       1. Bundled inside the PyInstaller _MEIPASS temp dir (or cwd in dev)
       2. Managed copy in TOOLS_DIR (user-installed via auto-updater)
       3. Bare name — let the OS PATH resolve it
-    This ensures the bundled HandBrakeCLI.exe / ffmpeg.exe are always
-    preferred over whatever happens to be on PATH.
     """
     ext = ".exe" if sys.platform == "win32" else ""
 
@@ -118,7 +116,6 @@ def ensure_ytdlp(status_cb, log_cb):
             status_cb(f"yt-dlp {tag} ready.")
             log_cb(f"[yt-dlp] {tag} installed.\n")
 
-        # Log resolved tool paths so it's easy to spot wrong binaries
         log_cb(f"[tools] yt-dlp    → {get_tool('yt-dlp')}\n")
         log_cb(f"[tools] ffmpeg     → {get_tool('ffmpeg')}\n")
         log_cb(f"[tools] HandBrake  → {get_tool('HandBrakeCLI')}\n")
@@ -170,7 +167,6 @@ def download_videos():
         hbcli_bin  = get_tool("HandBrakeCLI")
         ffmpeg_bin = get_tool("ffmpeg")
 
-        # Pass the directory containing ffmpeg to yt-dlp (it expects a dir or exe path)
         if os.path.isfile(ffmpeg_bin):
             ffmpeg_loc = ffmpeg_bin
         else:
@@ -181,11 +177,13 @@ def download_videos():
                 output_template = str(Path.home() / "Downloads" / "%(title)s.%(ext)s")
                 cmd = [
                     ytdlp_bin,
-                    "-f", "bv*+ba/b",
+                    # bestvideo+bestaudio picks the highest quality available
+                    # (4K, 1440p, 1080p — whatever the site offers).
+                    # "mweb" client works without po_token and unlocks all
+                    # resolutions on YouTube; web_creator and tv are fallbacks.
+                    "-f", "bestvideo+bestaudio/best",
                     "--merge-output-format", "mp4",
-                    # iOS client: no JS runtime, no po_token, no DRM for public videos.
-                    # android is the fallback.
-                    "--extractor-args", "youtube:player_client=ios,android",
+                    "--extractor-args", "youtube:player_client=mweb,web_creator,tv",
                     "--ffmpeg-location", ffmpeg_loc,
                     "-o", output_template,
                 ]
@@ -226,7 +224,6 @@ def download_videos():
                 proc.wait()
 
                 if proc.returncode == 0:
-                    # Fallback: find the most recently modified mp4 in Downloads
                     if downloaded_file is None or not os.path.exists(downloaded_file):
                         candidates = sorted(
                             (Path.home() / "Downloads").glob("*.mp4"),
