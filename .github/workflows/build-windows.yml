@@ -1,0 +1,89 @@
+name: Build Windows EXE
+
+on:
+  push:
+    tags:
+      - 'v*'          # triggers on version tags like v1.0.0
+  workflow_dispatch:  # also allows manual trigger from GitHub Actions tab
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Download yt-dlp.exe
+        run: |
+          $url = (Invoke-RestMethod https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest).assets |
+            Where-Object { $_.name -eq 'yt-dlp.exe' } | Select-Object -ExpandProperty browser_download_url
+          Invoke-WebRequest -Uri $url -OutFile yt-dlp.exe
+        shell: pwsh
+
+      - name: Download HandBrakeCLI.exe
+        run: |
+          $release = Invoke-RestMethod https://api.github.com/repos/HandBrake/HandBrake/releases/latest
+          $asset = $release.assets | Where-Object { $_.name -like '*arm64*CLI*' -or $_.name -like '*x86_64*CLI*' -or $_.name -like '*HandBrakeCLI*win*' } | Select-Object -First 1
+          if (-not $asset) {
+            $asset = $release.assets | Where-Object { $_.name -like '*CLI*' } | Select-Object -First 1
+          }
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile HandBrakeCLI.zip
+          Expand-Archive -Path HandBrakeCLI.zip -DestinationPath hb_extracted -Force
+          $exe = Get-ChildItem -Recurse hb_extracted -Filter 'HandBrakeCLI.exe' | Select-Object -First 1
+          Copy-Item $exe.FullName -Destination HandBrakeCLI.exe
+        shell: pwsh
+
+      - name: Convert icon PNG to ICO
+        run: |
+          pip install pillow
+          python -c "
+import sys
+from PIL import Image
+img = Image.open('cove_icon.png').convert('RGBA')
+img.save('cove_icon.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])
+print('Icon converted.')
+"
+        shell: pwsh
+
+      - name: Build EXE with PyInstaller
+        run: |
+          pyinstaller --onefile --windowed `
+            --name "CoveVideoDownloader" `
+            --icon="cove_icon.ico" `
+            --add-data "cove_icon.png;." `
+            --add-binary "yt-dlp.exe;." `
+            --add-binary "HandBrakeCLI.exe;." `
+            cove_video_downloader.py
+        shell: pwsh
+
+      - name: Upload EXE as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoveVideoDownloader-Windows
+          path: dist/CoveVideoDownloader.exe
+
+      - name: Create GitHub Release and attach EXE
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dist/CoveVideoDownloader.exe
+          body: |
+            ## Cove Video Downloader — Windows EXE
+
+            Self-contained Windows build. No installation required.
+            `yt-dlp` and `HandBrakeCLI` are bundled inside the EXE.
+
+            **Download:** `CoveVideoDownloader.exe` below.
+
+            > Videos save to your `Downloads` folder by default.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
