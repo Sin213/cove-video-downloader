@@ -22,9 +22,8 @@ ORANGE      = "#ffaa00"
 ORANGE_DIM  = "#cc8800"
 LOG_BG      = "#0f0e0d"
 
-# ── Tool directory (writable, next to EXE or in AppData) ──────────────────
+# ── Tool directory ─────────────────────────────────────────────────────────
 def get_tools_dir():
-    """Return a writable folder to store yt-dlp.exe and HandBrakeCLI.exe."""
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home())) / "CoveVideoDownloader"
     else:
@@ -35,7 +34,6 @@ def get_tools_dir():
 TOOLS_DIR = get_tools_dir()
 
 def resource_path(relative):
-    """Resolve path to bundled resource — works in dev and PyInstaller EXE."""
     try:
         base = sys._MEIPASS
     except AttributeError:
@@ -43,13 +41,7 @@ def resource_path(relative):
     return os.path.join(base, relative)
 
 def get_tool(name):
-    """
-    Find a CLI tool. Priority:
-      1. TOOLS_DIR (auto-downloaded / updated)
-      2. Bundled inside EXE (HandBrakeCLI only)
-      3. System PATH
-    """
-    ext = ".exe" if sys.platform == "win32" else ""
+    ext     = ".exe" if sys.platform == "win32" else ""
     managed = TOOLS_DIR / (name + ext)
     if managed.exists():
         return str(managed)
@@ -57,7 +49,7 @@ def get_tool(name):
         bundled = resource_path(name + ".exe")
         if os.path.exists(bundled):
             return bundled
-    return name  # system PATH fallback
+    return name
 
 # ── yt-dlp auto-updater ───────────────────────────────────────────────────
 YTDLP_API   = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
@@ -70,14 +62,13 @@ def _ytdlp_current_tag():
     return ""
 
 def _ytdlp_fetch_latest():
-    """Return (tag, download_url) for the latest yt-dlp release."""
     req = urllib.request.Request(YTDLP_API,
           headers={"User-Agent": "CoveVideoDownloader"})
     with urllib.request.urlopen(req, timeout=10) as r:
         data = json.loads(r.read())
-    tag = data["tag_name"]
+    tag      = data["tag_name"]
     exe_name = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
-    url = next(
+    url      = next(
         a["browser_download_url"]
         for a in data["assets"]
         if a["name"] == exe_name
@@ -85,18 +76,14 @@ def _ytdlp_fetch_latest():
     return tag, url
 
 def ensure_ytdlp(status_cb, log_cb):
-    """
-    Called in a background thread at startup.
-    Downloads yt-dlp if missing or outdated, then sets it executable.
-    """
     try:
         status_cb("Checking for yt-dlp updates...")
         tag, url = _ytdlp_fetch_latest()
         current  = _ytdlp_current_tag()
 
         if current == tag and YTDLP_EXE.exists():
-            status_cb(f"yt-dlp {tag} is up to date.")
-            log_cb(f"[yt-dlp] {tag} already installed.\n")
+            status_cb(f"yt-dlp {tag} ready.")
+            log_cb(f"[yt-dlp] {tag} already up to date.\n")
             return
 
         action = "Updating" if YTDLP_EXE.exists() else "Downloading"
@@ -111,13 +98,12 @@ def ensure_ytdlp(status_cb, log_cb):
         YTDLP_VER_F.write_text(tag)
 
         status_cb(f"yt-dlp {tag} ready.")
-        log_cb(f"[yt-dlp] {tag} installed successfully.\n")
+        log_cb(f"[yt-dlp] {tag} installed.\n")
 
     except Exception as e:
-        msg = f"[yt-dlp] Auto-update failed: {e}\n"
-        log_cb(msg)
+        log_cb(f"[yt-dlp] Auto-update failed: {e}\n")
         if not YTDLP_EXE.exists():
-            status_cb("yt-dlp download failed — check your internet connection.")
+            status_cb("yt-dlp download failed — check internet connection.")
         else:
             status_cb("yt-dlp update check failed (using existing version).")
 
@@ -167,6 +153,10 @@ def download_videos():
                     ytdlp_bin,
                     "-f", "bv*+ba/b",
                     "--merge-output-format", "mp4",
+                    # Fix for YouTube n-challenge / JS runtime error:
+                    # Force the web player client which doesn’t require
+                    # a local JavaScript runtime to solve bot challenges.
+                    "--extractor-args", "youtube:player_client=web",
                     "-o", output_template,
                 ]
                 if browser != "None (Default)":
@@ -389,7 +379,7 @@ log_text = tk.Text(
 )
 log_text.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
 
-# ── Kick off yt-dlp auto-update in background on startup ───────────────────
+# ── Auto-update yt-dlp on startup ────────────────────────────────────────
 def _status_cb(msg):
     root.after(0, lambda: status_var.set(msg))
 
