@@ -34,9 +34,13 @@ jobs:
         shell: pwsh
         run: |
           choco install handbrake-cli -y
-          $hb = Get-ChildItem "C:\ProgramData\chocolatey" -Recurse -Filter "HandBrakeCLI.exe" | Select-Object -First 1
-          if (-not $hb) { throw "HandBrakeCLI.exe not found after install." }
+          # Must search chocolatey\lib only — chocolatey\bin contains shim wrappers,
+          # not the real binary. The shim causes "Cannot find file" at runtime.
+          $hb = Get-ChildItem "C:\ProgramData\chocolatey\lib" -Recurse -Filter "HandBrakeCLI.exe" | Select-Object -First 1
+          if (-not $hb) { throw "HandBrakeCLI.exe not found in chocolatey\lib after install." }
+          Write-Host "Found HandBrakeCLI at: $($hb.FullName)"
           Copy-Item $hb.FullName -Destination "HandBrakeCLI.exe"
+          Write-Host "Copied. Size: $((Get-Item 'HandBrakeCLI.exe').Length) bytes"
 
       - name: Download ffmpeg for bundling
         shell: pwsh
@@ -47,6 +51,7 @@ jobs:
           $ffexe = Get-ChildItem ffmpeg_tmp -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
           if (-not $ffexe) { throw "ffmpeg.exe not found in archive." }
           Copy-Item $ffexe.FullName -Destination "ffmpeg.exe"
+          Write-Host "ffmpeg.exe size: $((Get-Item 'ffmpeg.exe').Length) bytes"
           Remove-Item -Recurse -Force ffmpeg_tmp, ffmpeg.zip
 
       - name: Convert PNG icon to ICO
