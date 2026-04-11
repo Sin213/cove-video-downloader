@@ -154,9 +154,10 @@ def download_videos():
                     "-f", "bv*+ba/b",
                     "--merge-output-format", "mp4",
                     # Fix for YouTube n-challenge / JS runtime error:
-                    # Force the web player client which doesn’t require
-                    # a local JavaScript runtime to solve bot challenges.
-                    "--extractor-args", "youtube:player_client=web",
+                    # Use mweb first, then web_creator and tv as fallbacks.
+                    # These clients bypass the JS runtime requirement and
+                    # do not need a po_token for public videos.
+                    "--extractor-args", "youtube:player_client=mweb,web_creator,tv",
                     "-o", output_template,
                 ]
                 if browser != "None (Default)":
