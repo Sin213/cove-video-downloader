@@ -41,12 +41,6 @@ def resource_path(relative):
     return os.path.join(base, relative)
 
 def get_tool(name):
-    """
-    Resolution order (highest priority first):
-      1. Bundled inside the PyInstaller _MEIPASS temp dir (or cwd in dev)
-      2. Managed copy in TOOLS_DIR (user-installed via auto-updater)
-      3. Bare name — let the OS PATH resolve it
-    """
     ext = ".exe" if sys.platform == "win32" else ""
 
     # 1. Bundled binary (highest priority)
@@ -60,7 +54,7 @@ def get_tool(name):
     if managed.exists():
         return str(managed)
 
-    # 3. Fall back to PATH (also covers non-Windows bundled)
+    # 3. Fall back to PATH
     if sys.platform != "win32":
         bundled = resource_path(name)
         if os.path.exists(bundled):
@@ -177,13 +171,12 @@ def download_videos():
                 output_template = str(Path.home() / "Downloads" / "%(title)s.%(ext)s")
                 cmd = [
                     ytdlp_bin,
-                    # bestvideo+bestaudio picks the highest quality available
-                    # (4K, 1440p, 1080p — whatever the site offers).
-                    # "mweb" client works without po_token and unlocks all
-                    # resolutions on YouTube; web_creator and tv are fallbacks.
+                    # bestvideo+bestaudio = highest quality (4K/1440p/1080p)
+                    # web client: no DRM, no PO token, serves all resolutions.
+                    # ios fallback handles sites where web isn't available.
                     "-f", "bestvideo+bestaudio/best",
                     "--merge-output-format", "mp4",
-                    "--extractor-args", "youtube:player_client=mweb,web_creator,tv",
+                    "--extractor-args", "youtube:player_client=web,ios",
                     "--ffmpeg-location", ffmpeg_loc,
                     "-o", output_template,
                 ]
