@@ -145,6 +145,7 @@ def download_videos():
 
         ytdlp_bin = get_tool("yt-dlp")
         hbcli_bin = get_tool("HandBrakeCLI")
+        ffmpeg_bin = get_tool("ffmpeg")
 
         for i, url in enumerate(urls, 1):
             try:
@@ -153,11 +154,13 @@ def download_videos():
                     ytdlp_bin,
                     "-f", "bv*+ba/b",
                     "--merge-output-format", "mp4",
-                    # Fix for YouTube n-challenge / JS runtime error:
-                    # Use mweb first, then web_creator and tv as fallbacks.
-                    # These clients bypass the JS runtime requirement and
-                    # do not need a po_token for public videos.
-                    "--extractor-args", "youtube:player_client=mweb,web_creator,tv",
+                    # iOS client: no JS runtime, no po_token, no DRM issues
+                    # for standard public videos. Falls back to android if
+                    # ios is unavailable for a given video.
+                    "--extractor-args", "youtube:player_client=ios,android",
+                    "--ffmpeg-location", ffmpeg_bin
+                        if os.path.isfile(ffmpeg_bin)
+                        else os.path.dirname(ffmpeg_bin) if os.path.isabs(ffmpeg_bin) else "ffmpeg",
                     "-o", output_template,
                 ]
                 if browser != "None (Default)":
@@ -186,50 +189,71 @@ def download_videos():
                         m = re.search(r'\"([^\"]+)\"', s)
                         if m:
                             downloaded_file = m.group(1)
-                    elif "[download] Destination:" in s and s.endswith(".mp4"):
-                        downloaded_file = s.split("Destination:")[1].strip()
+                    elif "[download] Destination:" in s:
+                        candidate = s.split("Destination:", 1)[1].strip()
+                        # Only track the final merged mp4, not partial format files
+                        if candidate.endswith(".mp4"):
+                            downloaded_file = candidate
                     elif "has already been downloaded" in s:
-                        downloaded_file = s.replace("[download]", "").replace("has already been downloaded", "").strip()
+                        candidate = s.replace("[download]", "").replace("has already been downloaded", "").strip()
+                        if candidate.endswith(".mp4"):
+                            downloaded_file = candidate
                 proc.wait()
 
                 if proc.returncode == 0:
+                    # If no mp4 destination was logged, look for the merged file
+                    # by reconstructing the expected output path from the title
+                    if downloaded_file is None or not os.path.exists(downloaded_file):
+                        downloads = Path.home() / "Downloads"
+                        candidates = sorted(
+                            downloads.glob("*.mp4"),
+                            key=lambda p: p.stat().st_mtime,
+                            reverse=True,
+                        )
+                        if candidates:
+                            downloaded_file = str(candidates[0])
+
                     if do_compress and downloaded_file and os.path.exists(downloaded_file):
                         orig_sz  = os.path.getsize(downloaded_file)
                         orig_mb  = orig_sz / (1024 * 1024)
-                        tmp_file = downloaded_file + ".tmp.mp4"
 
-                        log_write(f"\n--- Compressing (H.265 Web Balance) ---\n")
-                        log_write(f"Original: {orig_mb:.1f} MB\n")
-
-                        hb_cmd = [
-                            hbcli_bin,
-                            "-i", downloaded_file, "-o", tmp_file,
-                            "-e", "x265", "-q", "31.5",
-                            "--encoder-preset", "fast",
-                            "-E", "aac", "-B", "192",
-                        ]
-                        hb_proc = subprocess.Popen(
-                            hb_cmd, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, bufsize=1,
-                            creationflags=creationflags,
-                        )
-                        for hb_line in hb_proc.stdout:
-                            log_write(hb_line.replace("\r", "\n"))
-                        hb_proc.wait()
-
-                        if hb_proc.returncode == 0:
-                            new_sz = os.path.getsize(tmp_file)
-                            new_mb = new_sz / (1024 * 1024)
-                            if new_sz < orig_sz:
-                                os.replace(tmp_file, downloaded_file)
-                                log_write(f"\n[OK] {orig_mb:.1f}MB → {new_mb:.1f}MB saved!\n")
-                            else:
-                                os.remove(tmp_file)
-                                log_write(f"\n[SKIP] Original already optimal ({orig_mb:.1f}MB). Kept as-is.\n")
+                        if orig_sz == 0:
+                            log_write("\n[SKIP] File size is 0 bytes, skipping compression.\n")
                         else:
-                            log_write("\n[ERROR] Compression failed. Original kept.\n")
-                            if os.path.exists(tmp_file):
-                                os.remove(tmp_file)
+                            tmp_file = downloaded_file + ".tmp.mp4"
+
+                            log_write(f"\n--- Compressing (H.265 Web Balance) ---\n")
+                            log_write(f"Original: {orig_mb:.1f} MB\n")
+
+                            hb_cmd = [
+                                hbcli_bin,
+                                "-i", downloaded_file, "-o", tmp_file,
+                                "-e", "x265", "-q", "31.5",
+                                "--encoder-preset", "fast",
+                                "-E", "aac", "-B", "192",
+                            ]
+                            hb_proc = subprocess.Popen(
+                                hb_cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                creationflags=creationflags,
+                            )
+                            for hb_line in hb_proc.stdout:
+                                log_write(hb_line.replace("\r", "\n"))
+                            hb_proc.wait()
+
+                            if hb_proc.returncode == 0:
+                                new_sz = os.path.getsize(tmp_file)
+                                new_mb = new_sz / (1024 * 1024)
+                                if new_sz < orig_sz:
+                                    os.replace(tmp_file, downloaded_file)
+                                    log_write(f"\n[OK] {orig_mb:.1f}MB → {new_mb:.1f}MB saved!\n")
+                                else:
+                                    os.remove(tmp_file)
+                                    log_write(f"\n[SKIP] Original already optimal ({orig_mb:.1f}MB). Kept as-is.\n")
+                            else:
+                                log_write("\n[ERROR] Compression failed. Original kept.\n")
+                                if os.path.exists(tmp_file):
+                                    os.remove(tmp_file)
 
                     success += 1
                 else:

@@ -38,6 +38,17 @@ jobs:
           if (-not $hb) { throw "HandBrakeCLI.exe not found after install." }
           Copy-Item $hb.FullName -Destination "HandBrakeCLI.exe"
 
+      - name: Download ffmpeg for bundling
+        shell: pwsh
+        run: |
+          $url = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          Invoke-WebRequest $url -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
+          $ffexe = Get-ChildItem ffmpeg_tmp -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+          if (-not $ffexe) { throw "ffmpeg.exe not found in archive." }
+          Copy-Item $ffexe.FullName -Destination "ffmpeg.exe"
+          Remove-Item -Recurse -Force ffmpeg_tmp, ffmpeg.zip
+
       - name: Convert PNG icon to ICO
         shell: pwsh
         run: python -c "from PIL import Image; img = Image.open('cove_icon.png').convert('RGBA'); img.save('cove_icon.ico', format='ICO', sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])"
@@ -50,6 +61,7 @@ jobs:
             --icon "cove_icon.ico" `
             --add-data "cove_icon.png;." `
             --add-binary "HandBrakeCLI.exe;." `
+            --add-binary "ffmpeg.exe;." `
             cove_video_downloader.py
 
       - name: Upload EXE artifact
