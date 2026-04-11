@@ -30,10 +30,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller pillow
 
-      - name: Download yt-dlp.exe
-        shell: pwsh
-        run: Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "yt-dlp.exe"
-
       - name: Install HandBrake CLI via Chocolatey
         shell: pwsh
         run: |
@@ -53,7 +49,6 @@ jobs:
             --name "CoveVideoDownloader" `
             --icon "cove_icon.ico" `
             --add-data "cove_icon.png;." `
-            --add-binary "yt-dlp.exe;." `
             --add-binary "HandBrakeCLI.exe;." `
             cove_video_downloader.py
 

@@ -7,6 +7,9 @@ from pathlib import Path
 import re
 import os
 import sys
+import urllib.request
+import json
+import shutil
 
 # ── Color palette (dark theme) ─────────────────────────────────────────────
 BG          = "#141312"
@@ -19,26 +22,106 @@ ORANGE      = "#ffaa00"
 ORANGE_DIM  = "#cc8800"
 LOG_BG      = "#0f0e0d"
 
+# ── Tool directory (writable, next to EXE or in AppData) ──────────────────
+def get_tools_dir():
+    """Return a writable folder to store yt-dlp.exe and HandBrakeCLI.exe."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home())) / "CoveVideoDownloader"
+    else:
+        base = Path.home() / ".cove-video-downloader"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+TOOLS_DIR = get_tools_dir()
+
 def resource_path(relative):
-    """Resolve path to bundled resource — works both in dev and PyInstaller EXE."""
+    """Resolve path to bundled resource — works in dev and PyInstaller EXE."""
     try:
-        base = sys._MEIPASS  # PyInstaller temp extraction folder
+        base = sys._MEIPASS
     except AttributeError:
         base = os.path.abspath(".")
     return os.path.join(base, relative)
 
 def get_tool(name):
     """
-    Resolve a CLI tool (yt-dlp, HandBrakeCLI).
-    On Windows inside a bundled EXE, use the .exe from the bundle.
-    On Linux/Mac, fall back to the system PATH version.
+    Find a CLI tool. Priority:
+      1. TOOLS_DIR (auto-downloaded / updated)
+      2. Bundled inside EXE (HandBrakeCLI only)
+      3. System PATH
     """
+    ext = ".exe" if sys.platform == "win32" else ""
+    managed = TOOLS_DIR / (name + ext)
+    if managed.exists():
+        return str(managed)
     if sys.platform == "win32":
         bundled = resource_path(name + ".exe")
         if os.path.exists(bundled):
             return bundled
-    return name  # system PATH fallback (Linux / unbundled)
+    return name  # system PATH fallback
 
+# ── yt-dlp auto-updater ───────────────────────────────────────────────────
+YTDLP_API   = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+YTDLP_VER_F = TOOLS_DIR / "yt-dlp.version"
+YTDLP_EXE   = TOOLS_DIR / ("yt-dlp.exe" if sys.platform == "win32" else "yt-dlp")
+
+def _ytdlp_current_tag():
+    if YTDLP_VER_F.exists():
+        return YTDLP_VER_F.read_text().strip()
+    return ""
+
+def _ytdlp_fetch_latest():
+    """Return (tag, download_url) for the latest yt-dlp release."""
+    req = urllib.request.Request(YTDLP_API,
+          headers={"User-Agent": "CoveVideoDownloader"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.loads(r.read())
+    tag = data["tag_name"]
+    exe_name = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
+    url = next(
+        a["browser_download_url"]
+        for a in data["assets"]
+        if a["name"] == exe_name
+    )
+    return tag, url
+
+def ensure_ytdlp(status_cb, log_cb):
+    """
+    Called in a background thread at startup.
+    Downloads yt-dlp if missing or outdated, then sets it executable.
+    """
+    try:
+        status_cb("Checking for yt-dlp updates...")
+        tag, url = _ytdlp_fetch_latest()
+        current  = _ytdlp_current_tag()
+
+        if current == tag and YTDLP_EXE.exists():
+            status_cb(f"yt-dlp {tag} is up to date.")
+            log_cb(f"[yt-dlp] {tag} already installed.\n")
+            return
+
+        action = "Updating" if YTDLP_EXE.exists() else "Downloading"
+        status_cb(f"{action} yt-dlp {tag}...")
+        log_cb(f"[yt-dlp] {action} {tag}...\n")
+
+        tmp = YTDLP_EXE.with_suffix(".tmp")
+        urllib.request.urlretrieve(url, tmp)
+        shutil.move(str(tmp), str(YTDLP_EXE))
+        if sys.platform != "win32":
+            YTDLP_EXE.chmod(0o755)
+        YTDLP_VER_F.write_text(tag)
+
+        status_cb(f"yt-dlp {tag} ready.")
+        log_cb(f"[yt-dlp] {tag} installed successfully.\n")
+
+    except Exception as e:
+        msg = f"[yt-dlp] Auto-update failed: {e}\n"
+        log_cb(msg)
+        if not YTDLP_EXE.exists():
+            status_cb("yt-dlp download failed — check your internet connection.")
+        else:
+            status_cb("yt-dlp update check failed (using existing version).")
+
+# ── Icon ──────────────────────────────────────────────────────────────────
 def set_icon(root):
     try:
         from tkinter import PhotoImage
@@ -50,11 +133,17 @@ def set_icon(root):
     except Exception:
         pass
 
+# ── Download logic ─────────────────────────────────────────────────────────
 def download_videos():
     raw_text = urls_text.get("1.0", tk.END)
     urls = [line.strip() for line in raw_text.split("\n") if line.strip()]
     if not urls:
         messagebox.showwarning("No links", "Please paste at least one video link first.")
+        return
+
+    if not YTDLP_EXE.exists():
+        messagebox.showerror("yt-dlp not ready",
+            "yt-dlp hasn't finished downloading yet. Please wait a moment and try again.")
         return
 
     browser     = browser_var.get()
@@ -68,8 +157,8 @@ def download_videos():
         fail    = 0
         log_clear()
 
-        ytdlp_bin   = get_tool("yt-dlp")
-        hbcli_bin   = get_tool("HandBrakeCLI")
+        ytdlp_bin = get_tool("yt-dlp")
+        hbcli_bin = get_tool("HandBrakeCLI")
 
         for i, url in enumerate(urls, 1):
             try:
@@ -103,7 +192,7 @@ def download_videos():
                     log_write(line)
                     s = line.strip()
                     if "[Merger] Merging formats into" in s:
-                        m = re.search(r'"([^"]+)"', s)
+                        m = re.search(r'\"([^\"]+)\"', s)
                         if m:
                             downloaded_file = m.group(1)
                     elif "[download] Destination:" in s and s.endswith(".mp4"):
@@ -156,7 +245,8 @@ def download_videos():
                     fail += 1
 
             except FileNotFoundError:
-                status_var.set("Error: yt-dlp or HandBrakeCLI not found.")
+                log_write("[ERROR] yt-dlp or HandBrakeCLI not found.\n")
+                status_var.set("Error: tool not found.")
                 download_btn.config(state=tk.NORMAL)
                 return
 
@@ -165,6 +255,7 @@ def download_videos():
 
     threading.Thread(target=run, daemon=True).start()
 
+# ── Log helpers ────────────────────────────────────────────────────────────
 def log_write(text):
     log_text.config(state=tk.NORMAL)
     log_text.insert(tk.END, text)
@@ -204,7 +295,7 @@ set_icon(root)
 
 browser_var  = tk.StringVar(value="None (Default)")
 compress_var = tk.BooleanVar(value=True)
-status_var   = tk.StringVar(value="")
+status_var   = tk.StringVar(value="Checking yt-dlp...")
 
 def lbl(parent, text, size=9, bold=False, color=TEXT, **kw):
     weight = "bold" if bold else "normal"
@@ -297,5 +388,18 @@ log_text = tk.Text(
     highlightcolor=ORANGE,
 )
 log_text.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+
+# ── Kick off yt-dlp auto-update in background on startup ───────────────────
+def _status_cb(msg):
+    root.after(0, lambda: status_var.set(msg))
+
+def _log_cb(msg):
+    root.after(0, lambda: log_write(msg))
+
+threading.Thread(
+    target=ensure_ytdlp,
+    args=(_status_cb, _log_cb),
+    daemon=True,
+).start()
 
 root.mainloop()
