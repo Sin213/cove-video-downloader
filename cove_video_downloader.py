@@ -41,14 +41,33 @@ def resource_path(relative):
     return os.path.join(base, relative)
 
 def get_tool(name):
-    ext     = ".exe" if sys.platform == "win32" else ""
+    """
+    Resolution order (highest priority first):
+      1. Bundled inside the PyInstaller _MEIPASS temp dir (or cwd in dev)
+      2. Managed copy in TOOLS_DIR (user-installed via auto-updater)
+      3. Bare name — let the OS PATH resolve it
+    This ensures the bundled HandBrakeCLI.exe / ffmpeg.exe are always
+    preferred over whatever happens to be on PATH.
+    """
+    ext = ".exe" if sys.platform == "win32" else ""
+
+    # 1. Bundled binary (highest priority)
+    if sys.platform == "win32":
+        bundled = resource_path(name + ext)
+        if os.path.exists(bundled):
+            return bundled
+
+    # 2. Managed copy in APPDATA/CoveVideoDownloader
     managed = TOOLS_DIR / (name + ext)
     if managed.exists():
         return str(managed)
-    if sys.platform == "win32":
-        bundled = resource_path(name + ".exe")
+
+    # 3. Fall back to PATH (also covers non-Windows bundled)
+    if sys.platform != "win32":
+        bundled = resource_path(name)
         if os.path.exists(bundled):
             return bundled
+
     return name
 
 # ── yt-dlp auto-updater ───────────────────────────────────────────────────
@@ -84,21 +103,25 @@ def ensure_ytdlp(status_cb, log_cb):
         if current == tag and YTDLP_EXE.exists():
             status_cb(f"yt-dlp {tag} ready.")
             log_cb(f"[yt-dlp] {tag} already up to date.\n")
-            return
+        else:
+            action = "Updating" if YTDLP_EXE.exists() else "Downloading"
+            status_cb(f"{action} yt-dlp {tag}...")
+            log_cb(f"[yt-dlp] {action} {tag}...\n")
 
-        action = "Updating" if YTDLP_EXE.exists() else "Downloading"
-        status_cb(f"{action} yt-dlp {tag}...")
-        log_cb(f"[yt-dlp] {action} {tag}...\n")
+            tmp = YTDLP_EXE.with_suffix(".tmp")
+            urllib.request.urlretrieve(url, tmp)
+            shutil.move(str(tmp), str(YTDLP_EXE))
+            if sys.platform != "win32":
+                YTDLP_EXE.chmod(0o755)
+            YTDLP_VER_F.write_text(tag)
 
-        tmp = YTDLP_EXE.with_suffix(".tmp")
-        urllib.request.urlretrieve(url, tmp)
-        shutil.move(str(tmp), str(YTDLP_EXE))
-        if sys.platform != "win32":
-            YTDLP_EXE.chmod(0o755)
-        YTDLP_VER_F.write_text(tag)
+            status_cb(f"yt-dlp {tag} ready.")
+            log_cb(f"[yt-dlp] {tag} installed.\n")
 
-        status_cb(f"yt-dlp {tag} ready.")
-        log_cb(f"[yt-dlp] {tag} installed.\n")
+        # Log resolved tool paths so it's easy to spot wrong binaries
+        log_cb(f"[tools] yt-dlp    → {get_tool('yt-dlp')}\n")
+        log_cb(f"[tools] ffmpeg     → {get_tool('ffmpeg')}\n")
+        log_cb(f"[tools] HandBrake  → {get_tool('HandBrakeCLI')}\n")
 
     except Exception as e:
         log_cb(f"[yt-dlp] Auto-update failed: {e}\n")
@@ -143,9 +166,15 @@ def download_videos():
         fail    = 0
         log_clear()
 
-        ytdlp_bin = get_tool("yt-dlp")
-        hbcli_bin = get_tool("HandBrakeCLI")
+        ytdlp_bin  = get_tool("yt-dlp")
+        hbcli_bin  = get_tool("HandBrakeCLI")
         ffmpeg_bin = get_tool("ffmpeg")
+
+        # Pass the directory containing ffmpeg to yt-dlp (it expects a dir or exe path)
+        if os.path.isfile(ffmpeg_bin):
+            ffmpeg_loc = ffmpeg_bin
+        else:
+            ffmpeg_loc = "ffmpeg"
 
         for i, url in enumerate(urls, 1):
             try:
@@ -154,13 +183,10 @@ def download_videos():
                     ytdlp_bin,
                     "-f", "bv*+ba/b",
                     "--merge-output-format", "mp4",
-                    # iOS client: no JS runtime, no po_token, no DRM issues
-                    # for standard public videos. Falls back to android if
-                    # ios is unavailable for a given video.
+                    # iOS client: no JS runtime, no po_token, no DRM for public videos.
+                    # android is the fallback.
                     "--extractor-args", "youtube:player_client=ios,android",
-                    "--ffmpeg-location", ffmpeg_bin
-                        if os.path.isfile(ffmpeg_bin)
-                        else os.path.dirname(ffmpeg_bin) if os.path.isabs(ffmpeg_bin) else "ffmpeg",
+                    "--ffmpeg-location", ffmpeg_loc,
                     "-o", output_template,
                 ]
                 if browser != "None (Default)":
@@ -191,7 +217,6 @@ def download_videos():
                             downloaded_file = m.group(1)
                     elif "[download] Destination:" in s:
                         candidate = s.split("Destination:", 1)[1].strip()
-                        # Only track the final merged mp4, not partial format files
                         if candidate.endswith(".mp4"):
                             downloaded_file = candidate
                     elif "has already been downloaded" in s:
@@ -201,12 +226,10 @@ def download_videos():
                 proc.wait()
 
                 if proc.returncode == 0:
-                    # If no mp4 destination was logged, look for the merged file
-                    # by reconstructing the expected output path from the title
+                    # Fallback: find the most recently modified mp4 in Downloads
                     if downloaded_file is None or not os.path.exists(downloaded_file):
-                        downloads = Path.home() / "Downloads"
                         candidates = sorted(
-                            downloads.glob("*.mp4"),
+                            (Path.home() / "Downloads").glob("*.mp4"),
                             key=lambda p: p.stat().st_mtime,
                             reverse=True,
                         )
@@ -214,16 +237,16 @@ def download_videos():
                             downloaded_file = str(candidates[0])
 
                     if do_compress and downloaded_file and os.path.exists(downloaded_file):
-                        orig_sz  = os.path.getsize(downloaded_file)
-                        orig_mb  = orig_sz / (1024 * 1024)
+                        orig_sz = os.path.getsize(downloaded_file)
+                        orig_mb = orig_sz / (1024 * 1024)
 
                         if orig_sz == 0:
-                            log_write("\n[SKIP] File size is 0 bytes, skipping compression.\n")
+                            log_write("\n[SKIP] File is 0 bytes, skipping compression.\n")
                         else:
                             tmp_file = downloaded_file + ".tmp.mp4"
-
                             log_write(f"\n--- Compressing (H.265 Web Balance) ---\n")
                             log_write(f"Original: {orig_mb:.1f} MB\n")
+                            log_write(f"[HandBrake] using: {hbcli_bin}\n")
 
                             hb_cmd = [
                                 hbcli_bin,
