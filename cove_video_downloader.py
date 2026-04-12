@@ -171,12 +171,12 @@ def download_videos():
                 output_template = str(Path.home() / "Downloads" / "%(title)s.%(ext)s")
                 cmd = [
                     ytdlp_bin,
-                    # bestvideo+bestaudio = highest quality (4K/1440p/1080p)
-                    # web client: no DRM, no PO token, serves all resolutions.
-                    # ios fallback handles sites where web isn't available.
+                    # bestvideo+bestaudio = highest quality available
+                    # android_vr: serves up to 4K, no PO token required.
+                    # android: reliable fallback, up to 1080p, no PO token.
                     "-f", "bestvideo+bestaudio/best",
                     "--merge-output-format", "mp4",
-                    "--extractor-args", "youtube:player_client=web,ios",
+                    "--extractor-args", "youtube:player_client=android_vr,android",
                     "--ffmpeg-location", ffmpeg_loc,
                     "-o", output_template,
                 ]
