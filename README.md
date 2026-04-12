@@ -38,8 +38,8 @@ Paste as many links as you want — one per line — and hit Download once. The 
 ### Optional H.265 compression
 The **Compress** checkbox (on by default) runs the downloaded video through HandBrake after downloading using H.265 (HEVC) at a web-balanced quality setting with AAC 192k audio — meaningfully smaller files with no visible quality loss. If the compressed file ends up *larger* than the original, it's automatically discarded and the original is kept.
 
-### NSFW / age-restricted content
-The **Unlock NSFW** dropdown passes your browser cookies to `yt-dlp` so it can access age-restricted or login-gated content — no credentials ever enter the app. Select the browser you're already logged into (Firefox, Chrome, Brave, Chromium, or Edge).
+### Browser Cookies
+The **Browser Cookies** dropdown passes your browser cookies to `yt-dlp` so it can access age-restricted, login-gated, or NSFW content — no credentials ever enter the app. Select the browser you're already logged into (Firefox, Chrome, Brave, Chromium, or Edge). Works on any site, not just Reddit.
 
 ### Works on 1,000+ sites
 Powered by `yt-dlp` — YouTube, Reddit, X (Twitter), Instagram, TikTok, Facebook, Twitch, Vimeo, Dailymotion, Bilibili, Tumblr, and hundreds more. Just paste the link.
@@ -68,7 +68,7 @@ A scrolling log shows real-time output from both the download and compression st
 - All tools (yt-dlp, ffmpeg, HandBrakeCLI) are **bundled inside the EXE** — nothing to install.
 - yt-dlp is kept up to date automatically on every launch.
 - DRM-protected content (Netflix, Disney+, etc.) cannot be downloaded — platform-level restriction, not an app limitation.
-- The NSFW/cookie feature only works for sites where you're already logged in on the selected browser.
+- The Browser Cookies feature only works for sites where you're already logged in on the selected browser.
 - Videos always save to `C:\Users\<you>\Downloads\`.
 
 ---

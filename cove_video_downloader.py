@@ -171,9 +171,6 @@ def download_videos():
                 output_template = str(Path.home() / "Downloads" / "%(title)s.%(ext)s")
                 cmd = [
                     ytdlp_bin,
-                    # bestvideo+bestaudio = highest quality available
-                    # android_vr: serves up to 4K, no PO token required.
-                    # android: reliable fallback, up to 1080p, no PO token.
                     "-f", "bestvideo+bestaudio/best",
                     "--merge-output-format", "mp4",
                     "--extractor-args", "youtube:player_client=android_vr,android",
@@ -365,7 +362,7 @@ urls_text.bind("<Control-V>", handle_ctrl_v)
 
 opts = tk.Frame(outer, bg=BG)
 opts.pack(fill=tk.X, pady=(0, 10))
-lbl(opts, "Unlock NSFW:").pack(side=tk.LEFT)
+lbl(opts, "Browser Cookies:").pack(side=tk.LEFT)
 browser_menu = tk.OptionMenu(
     opts, browser_var,
     "None (Default)", "Firefox", "Chrome", "Brave", "Chromium", "Edge",
