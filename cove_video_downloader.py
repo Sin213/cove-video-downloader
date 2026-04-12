@@ -118,23 +118,39 @@ def set_icon(root):
 BROWSERS = ["firefox", "chrome", "brave", "chromium", "edge"]
 
 def detect_browser_cookies(ytdlp_bin, log_cb):
-    """Try each browser silently; return the first one that yields cookies, or None."""
-    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    for browser in BROWSERS:
-        try:
-            result = subprocess.run(
-                [ytdlp_bin, "--cookies-from-browser", browser,
-                 "--dump-user-agent"],  # lightweight probe
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                timeout=6, creationflags=creationflags,
-            )
-            if result.returncode == 0:
-                log_cb(f"[cookies] Auto-detected browser: {browser}\n")
-                return browser
-        except Exception:
-            pass
-    log_cb("[cookies] No browser cookies found — proceeding without.\n")
-    return None
+    """
+    Try each browser silently using a lightweight cookie list probe.
+    Returns the first browser that succeeds, or None.
+    Fully guarded so any failure (including Python 3.14 runtime changes)
+    never crashes the app.
+    """
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        for browser in BROWSERS:
+            try:
+                result = subprocess.run(
+                    [
+                        ytdlp_bin,
+                        "--cookies-from-browser", browser,
+                        "--simulate",
+                        "--no-warnings",
+                        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=8,
+                    creationflags=creationflags,
+                )
+                if result.returncode == 0:
+                    log_cb(f"[cookies] Auto-detected browser: {browser}\n")
+                    return browser
+            except Exception:
+                continue
+        log_cb("[cookies] No browser cookies found — proceeding without.\n")
+        return None
+    except Exception as e:
+        log_cb(f"[cookies] Detection skipped: {e}\n")
+        return None
 
 # ── Download logic ─────────────────────────────────────────────────────────
 def download_videos():
@@ -148,8 +164,8 @@ def download_videos():
             "yt-dlp hasn't finished downloading yet. Please wait a moment and try again.")
         return
 
-    output_dir    = output_var.get() or str(Path.home() / "Downloads")
-    do_compress   = compress_var.get()
+    output_dir  = output_var.get() or str(Path.home() / "Downloads")
+    do_compress = compress_var.get()
 
     download_btn.config(state=tk.DISABLED)
     open_btn.config(state=tk.DISABLED)
@@ -164,6 +180,7 @@ def download_videos():
         hbcli_bin  = get_tool("HandBrakeCLI")
         ffmpeg_bin = get_tool("ffmpeg")
         ffmpeg_loc = ffmpeg_bin if os.path.isfile(ffmpeg_bin) else "ffmpeg"
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
         # Auto-detect browser cookies once before the download loop
         detected_browser = detect_browser_cookies(ytdlp_bin, log_write)
@@ -175,7 +192,12 @@ def download_videos():
                     ytdlp_bin,
                     "-f", "bestvideo+bestaudio/best",
                     "--merge-output-format", "mp4",
+                    # YouTube: use android_vr (4K, no PO token) + android fallback.
+                    # Scoped to youtube only so Bilibili/other extractors are unaffected.
                     "--extractor-args", "youtube:player_client=android_vr,android",
+                    # Fetch all fragments concurrently — fixes partial downloads on
+                    # segmented sites like Bilibili, Twitch VODs, etc.
+                    "--concurrent-fragments", "4",
                     "--ffmpeg-location", ffmpeg_loc,
                     "-o", output_template,
                 ]
@@ -187,7 +209,6 @@ def download_videos():
                 log_write(f"  [{i}/{len(urls)}] Downloading\n  {url}\n")
                 log_write(f"{'='*52}\n\n")
 
-                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, text=True, bufsize=1,
@@ -275,11 +296,9 @@ def download_videos():
 
                 success += 1
 
-            except FileNotFoundError:
-                log_write("[ERROR] yt-dlp or HandBrakeCLI not found.\n")
-                status_var.set("Error: tool not found.")
-                download_btn.config(state=tk.NORMAL)
-                return
+            except Exception as e:
+                log_write(f"[ERROR] Unexpected error: {e}\n")
+                fail += 1
 
         status_var.set(f"Done — {success} succeeded, {fail} failed.")
         download_btn.config(state=tk.NORMAL)
@@ -331,12 +350,15 @@ def choose_folder():
 
 def open_output_folder():
     folder = output_var.get() or str(Path.home() / "Downloads")
-    if sys.platform == "win32":
-        os.startfile(folder)
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", folder])
-    else:
-        subprocess.Popen(["xdg-open", folder])
+    try:
+        if sys.platform == "win32":
+            os.startfile(folder)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", folder])
+        else:
+            subprocess.Popen(["xdg-open", folder])
+    except Exception as e:
+        messagebox.showerror("Error", f"Could not open folder:\n{e}")
 
 # ── Root window ────────────────────────────────────────────────────────────
 root = tk.Tk()
@@ -406,7 +428,7 @@ output_entry = tk.Entry(
 )
 output_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 6), ipady=4)
 
-# ── Options row (compress only — cookies are now auto-detected)
+# ── Options row
 opts = tk.Frame(outer, bg=BG)
 opts.pack(fill=tk.X, pady=(4, 10))
 compress_cb = tk.Checkbutton(
