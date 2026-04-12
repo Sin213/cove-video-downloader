@@ -2,7 +2,7 @@
 import subprocess
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 from pathlib import Path
 import re
 import os
@@ -42,24 +42,17 @@ def resource_path(relative):
 
 def get_tool(name):
     ext = ".exe" if sys.platform == "win32" else ""
-
-    # 1. Bundled binary (highest priority)
     if sys.platform == "win32":
         bundled = resource_path(name + ext)
         if os.path.exists(bundled):
             return bundled
-
-    # 2. Managed copy in APPDATA/CoveVideoDownloader
     managed = TOOLS_DIR / (name + ext)
     if managed.exists():
         return str(managed)
-
-    # 3. Fall back to PATH
     if sys.platform != "win32":
         bundled = resource_path(name)
         if os.path.exists(bundled):
             return bundled
-
     return name
 
 # ── yt-dlp auto-updater ───────────────────────────────────────────────────
@@ -68,22 +61,15 @@ YTDLP_VER_F = TOOLS_DIR / "yt-dlp.version"
 YTDLP_EXE   = TOOLS_DIR / ("yt-dlp.exe" if sys.platform == "win32" else "yt-dlp")
 
 def _ytdlp_current_tag():
-    if YTDLP_VER_F.exists():
-        return YTDLP_VER_F.read_text().strip()
-    return ""
+    return YTDLP_VER_F.read_text().strip() if YTDLP_VER_F.exists() else ""
 
 def _ytdlp_fetch_latest():
-    req = urllib.request.Request(YTDLP_API,
-          headers={"User-Agent": "CoveVideoDownloader"})
+    req = urllib.request.Request(YTDLP_API, headers={"User-Agent": "CoveVideoDownloader"})
     with urllib.request.urlopen(req, timeout=10) as r:
         data = json.loads(r.read())
     tag      = data["tag_name"]
     exe_name = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
-    url      = next(
-        a["browser_download_url"]
-        for a in data["assets"]
-        if a["name"] == exe_name
-    )
+    url      = next(a["browser_download_url"] for a in data["assets"] if a["name"] == exe_name)
     return tag, url
 
 def ensure_ytdlp(status_cb, log_cb):
@@ -91,7 +77,6 @@ def ensure_ytdlp(status_cb, log_cb):
         status_cb("Checking for yt-dlp updates...")
         tag, url = _ytdlp_fetch_latest()
         current  = _ytdlp_current_tag()
-
         if current == tag and YTDLP_EXE.exists():
             status_cb(f"yt-dlp {tag} ready.")
             log_cb(f"[yt-dlp] {tag} already up to date.\n")
@@ -99,21 +84,17 @@ def ensure_ytdlp(status_cb, log_cb):
             action = "Updating" if YTDLP_EXE.exists() else "Downloading"
             status_cb(f"{action} yt-dlp {tag}...")
             log_cb(f"[yt-dlp] {action} {tag}...\n")
-
             tmp = YTDLP_EXE.with_suffix(".tmp")
             urllib.request.urlretrieve(url, tmp)
             shutil.move(str(tmp), str(YTDLP_EXE))
             if sys.platform != "win32":
                 YTDLP_EXE.chmod(0o755)
             YTDLP_VER_F.write_text(tag)
-
             status_cb(f"yt-dlp {tag} ready.")
             log_cb(f"[yt-dlp] {tag} installed.\n")
-
         log_cb(f"[tools] yt-dlp    → {get_tool('yt-dlp')}\n")
         log_cb(f"[tools] ffmpeg     → {get_tool('ffmpeg')}\n")
         log_cb(f"[tools] HandBrake  → {get_tool('HandBrakeCLI')}\n")
-
     except Exception as e:
         log_cb(f"[yt-dlp] Auto-update failed: {e}\n")
         if not YTDLP_EXE.exists():
@@ -133,6 +114,28 @@ def set_icon(root):
     except Exception:
         pass
 
+# ── Browser cookie auto-detection ──────────────────────────────────────────
+BROWSERS = ["firefox", "chrome", "brave", "chromium", "edge"]
+
+def detect_browser_cookies(ytdlp_bin, log_cb):
+    """Try each browser silently; return the first one that yields cookies, or None."""
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    for browser in BROWSERS:
+        try:
+            result = subprocess.run(
+                [ytdlp_bin, "--cookies-from-browser", browser,
+                 "--dump-user-agent"],  # lightweight probe
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=6, creationflags=creationflags,
+            )
+            if result.returncode == 0:
+                log_cb(f"[cookies] Auto-detected browser: {browser}\n")
+                return browser
+        except Exception:
+            pass
+    log_cb("[cookies] No browser cookies found — proceeding without.\n")
+    return None
+
 # ── Download logic ─────────────────────────────────────────────────────────
 def download_videos():
     raw_text = urls_text.get("1.0", tk.END)
@@ -140,16 +143,16 @@ def download_videos():
     if not urls:
         messagebox.showwarning("No links", "Please paste at least one video link first.")
         return
-
     if not YTDLP_EXE.exists():
         messagebox.showerror("yt-dlp not ready",
             "yt-dlp hasn't finished downloading yet. Please wait a moment and try again.")
         return
 
-    browser     = browser_var.get()
-    do_compress = compress_var.get()
+    output_dir    = output_var.get() or str(Path.home() / "Downloads")
+    do_compress   = compress_var.get()
 
     download_btn.config(state=tk.DISABLED)
+    open_btn.config(state=tk.DISABLED)
     status_var.set(f"Processing {len(urls)} video(s)...")
 
     def run():
@@ -160,15 +163,14 @@ def download_videos():
         ytdlp_bin  = get_tool("yt-dlp")
         hbcli_bin  = get_tool("HandBrakeCLI")
         ffmpeg_bin = get_tool("ffmpeg")
+        ffmpeg_loc = ffmpeg_bin if os.path.isfile(ffmpeg_bin) else "ffmpeg"
 
-        if os.path.isfile(ffmpeg_bin):
-            ffmpeg_loc = ffmpeg_bin
-        else:
-            ffmpeg_loc = "ffmpeg"
+        # Auto-detect browser cookies once before the download loop
+        detected_browser = detect_browser_cookies(ytdlp_bin, log_write)
 
         for i, url in enumerate(urls, 1):
             try:
-                output_template = str(Path.home() / "Downloads" / "%(title)s.%(ext)s")
+                output_template = str(Path(output_dir) / "%(title)s.%(ext)s")
                 cmd = [
                     ytdlp_bin,
                     "-f", "bestvideo+bestaudio/best",
@@ -177,18 +179,15 @@ def download_videos():
                     "--ffmpeg-location", ffmpeg_loc,
                     "-o", output_template,
                 ]
-                if browser != "None (Default)":
-                    cmd.extend(["--cookies-from-browser", browser.lower()])
+                if detected_browser:
+                    cmd.extend(["--cookies-from-browser", detected_browser])
                 cmd.append(url)
 
                 log_write(f"\n{'='*52}\n")
                 log_write(f"  [{i}/{len(urls)}] Downloading\n  {url}\n")
                 log_write(f"{'='*52}\n\n")
 
-                creationflags = 0
-                if sys.platform == "win32":
-                    creationflags = subprocess.CREATE_NO_WINDOW
-
+                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT, text=True, bufsize=1,
@@ -196,6 +195,7 @@ def download_videos():
                 )
 
                 downloaded_file = None
+                cookie_error    = False
                 for line in proc.stdout:
                     log_write(line)
                     s = line.strip()
@@ -211,63 +211,69 @@ def download_videos():
                         candidate = s.replace("[download]", "").replace("has already been downloaded", "").strip()
                         if candidate.endswith(".mp4"):
                             downloaded_file = candidate
+                    elif "login" in s.lower() or "sign in" in s.lower() or "403" in s:
+                        cookie_error = True
                 proc.wait()
 
-                if proc.returncode == 0:
-                    if downloaded_file is None or not os.path.exists(downloaded_file):
-                        candidates = sorted(
-                            (Path.home() / "Downloads").glob("*.mp4"),
-                            key=lambda p: p.stat().st_mtime,
-                            reverse=True,
-                        )
-                        if candidates:
-                            downloaded_file = str(candidates[0])
-
-                    if do_compress and downloaded_file and os.path.exists(downloaded_file):
-                        orig_sz = os.path.getsize(downloaded_file)
-                        orig_mb = orig_sz / (1024 * 1024)
-
-                        if orig_sz == 0:
-                            log_write("\n[SKIP] File is 0 bytes, skipping compression.\n")
-                        else:
-                            tmp_file = downloaded_file + ".tmp.mp4"
-                            log_write(f"\n--- Compressing (H.265 Web Balance) ---\n")
-                            log_write(f"Original: {orig_mb:.1f} MB\n")
-                            log_write(f"[HandBrake] using: {hbcli_bin}\n")
-
-                            hb_cmd = [
-                                hbcli_bin,
-                                "-i", downloaded_file, "-o", tmp_file,
-                                "-e", "x265", "-q", "31.5",
-                                "--encoder-preset", "fast",
-                                "-E", "aac", "-B", "192",
-                            ]
-                            hb_proc = subprocess.Popen(
-                                hb_cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, bufsize=1,
-                                creationflags=creationflags,
-                            )
-                            for hb_line in hb_proc.stdout:
-                                log_write(hb_line.replace("\r", "\n"))
-                            hb_proc.wait()
-
-                            if hb_proc.returncode == 0:
-                                new_sz = os.path.getsize(tmp_file)
-                                new_mb = new_sz / (1024 * 1024)
-                                if new_sz < orig_sz:
-                                    os.replace(tmp_file, downloaded_file)
-                                    log_write(f"\n[OK] {orig_mb:.1f}MB → {new_mb:.1f}MB saved!\n")
-                                else:
-                                    os.remove(tmp_file)
-                                    log_write(f"\n[SKIP] Original already optimal ({orig_mb:.1f}MB). Kept as-is.\n")
-                            else:
-                                log_write("\n[ERROR] Compression failed. Original kept.\n")
-                                if os.path.exists(tmp_file):
-                                    os.remove(tmp_file)
-
-                    success += 1
-                else:
+                if proc.returncode != 0:
                     fail += 1
+                    if cookie_error:
+                        root.after(0, lambda: messagebox.showwarning(
+                            "Login required",
+                            "This video requires you to be logged in.\n\n"
+                            "Make sure you're signed in on Firefox, Chrome, Brave, "
+                            "Chromium, or Edge and try again."
+                        ))
+                    continue
+
+                if downloaded_file is None or not os.path.exists(downloaded_file):
+                    candidates = sorted(
+                        Path(output_dir).glob("*.mp4"),
+                        key=lambda p: p.stat().st_mtime, reverse=True,
+                    )
+                    if candidates:
+                        downloaded_file = str(candidates[0])
+
+                if do_compress and downloaded_file and os.path.exists(downloaded_file):
+                    orig_sz = os.path.getsize(downloaded_file)
+                    orig_mb = orig_sz / (1024 * 1024)
+                    if orig_sz == 0:
+                        log_write("\n[SKIP] File is 0 bytes, skipping compression.\n")
+                    else:
+                        tmp_file = downloaded_file + ".tmp.mp4"
+                        log_write(f"\n--- Compressing (H.265 Web Balance) ---\n")
+                        log_write(f"Original: {orig_mb:.1f} MB\n")
+                        log_write(f"[HandBrake] using: {hbcli_bin}\n")
+                        hb_cmd = [
+                            hbcli_bin,
+                            "-i", downloaded_file, "-o", tmp_file,
+                            "-e", "x265", "-q", "31.5",
+                            "--encoder-preset", "fast",
+                            "-E", "aac", "-B", "192",
+                        ]
+                        hb_proc = subprocess.Popen(
+                            hb_cmd, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1,
+                            creationflags=creationflags,
+                        )
+                        for hb_line in hb_proc.stdout:
+                            log_write(hb_line.replace("\r", "\n"))
+                        hb_proc.wait()
+                        if hb_proc.returncode == 0:
+                            new_sz = os.path.getsize(tmp_file)
+                            new_mb = new_sz / (1024 * 1024)
+                            if new_sz < orig_sz:
+                                os.replace(tmp_file, downloaded_file)
+                                log_write(f"\n[OK] {orig_mb:.1f}MB → {new_mb:.1f}MB saved!\n")
+                            else:
+                                os.remove(tmp_file)
+                                log_write(f"\n[SKIP] Original already optimal ({orig_mb:.1f}MB). Kept as-is.\n")
+                        else:
+                            log_write("\n[ERROR] Compression failed. Original kept.\n")
+                            if os.path.exists(tmp_file):
+                                os.remove(tmp_file)
+
+                success += 1
 
             except FileNotFoundError:
                 log_write("[ERROR] yt-dlp or HandBrakeCLI not found.\n")
@@ -277,6 +283,7 @@ def download_videos():
 
         status_var.set(f"Done — {success} succeeded, {fail} failed.")
         download_btn.config(state=tk.NORMAL)
+        root.after(0, lambda: open_btn.config(state=tk.NORMAL))
 
     threading.Thread(target=run, daemon=True).start()
 
@@ -310,15 +317,36 @@ def handle_ctrl_v(event):
 def clear_links():
     urls_text.delete("1.0", tk.END)
 
+def choose_folder():
+    folder = filedialog.askdirectory(
+        title="Select output folder",
+        initialdir=output_var.get() or str(Path.home() / "Downloads"),
+    )
+    if folder:
+        output_var.set(folder)
+        output_entry.config(state=tk.NORMAL)
+        output_entry.delete(0, tk.END)
+        output_entry.insert(0, folder)
+        output_entry.config(state="readonly")
+
+def open_output_folder():
+    folder = output_var.get() or str(Path.home() / "Downloads")
+    if sys.platform == "win32":
+        os.startfile(folder)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", folder])
+    else:
+        subprocess.Popen(["xdg-open", folder])
+
 # ── Root window ────────────────────────────────────────────────────────────
 root = tk.Tk()
 root.title("Cove Video Downloader")
-root.geometry("860x600")
+root.geometry("860x640")
 root.configure(bg=BG)
 root.resizable(True, True)
 set_icon(root)
 
-browser_var  = tk.StringVar(value="None (Default)")
+output_var   = tk.StringVar(value=str(Path.home() / "Downloads"))
 compress_var = tk.BooleanVar(value=True)
 status_var   = tk.StringVar(value="Checking yt-dlp...")
 
@@ -342,6 +370,7 @@ def btn(parent, text, cmd, accent=False, **kw):
 outer = tk.Frame(root, bg=BG, padx=14, pady=12)
 outer.pack(fill=tk.BOTH, expand=True)
 
+# ── URL input row
 url_row = tk.Frame(outer, bg=BG)
 url_row.pack(fill=tk.X)
 lbl(url_row, "Video links:", bold=True).pack(side=tk.LEFT)
@@ -360,26 +389,28 @@ urls_text.pack(fill=tk.X, pady=(6, 10))
 urls_text.bind("<Control-v>", handle_ctrl_v)
 urls_text.bind("<Control-V>", handle_ctrl_v)
 
-opts = tk.Frame(outer, bg=BG)
-opts.pack(fill=tk.X, pady=(0, 10))
-lbl(opts, "Browser Cookies:").pack(side=tk.LEFT)
-browser_menu = tk.OptionMenu(
-    opts, browser_var,
-    "None (Default)", "Firefox", "Chrome", "Brave", "Chromium", "Edge",
+# ── Output folder row
+folder_row = tk.Frame(outer, bg=BG)
+folder_row.pack(fill=tk.X, pady=(0, 6))
+lbl(folder_row, "Save to:", bold=True).pack(side=tk.LEFT)
+btn(folder_row, "Browse", choose_folder).pack(side=tk.RIGHT)
+output_entry = tk.Entry(
+    folder_row,
+    textvariable=output_var,
+    state="readonly",
+    bg=SURFACE, fg=TEXT_MUTED,
+    readonlybackground=SURFACE,
+    relief=tk.FLAT,
+    font=("Consolas", 8),
+    highlightthickness=1, highlightbackground=BORDER,
 )
-browser_menu.config(
-    bg=SURFACE2, fg=TEXT, activebackground=BORDER,
-    activeforeground=ORANGE, relief=tk.FLAT,
-    font=("Consolas", 9), highlightthickness=0, padx=8,
-)
-browser_menu["menu"].config(
-    bg=SURFACE2, fg=TEXT, activebackground=BORDER, activeforeground=ORANGE,
-    font=("Consolas", 9),
-)
-browser_menu.pack(side=tk.LEFT, padx=(6, 20))
+output_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 6), ipady=4)
 
+# ── Options row (compress only — cookies are now auto-detected)
+opts = tk.Frame(outer, bg=BG)
+opts.pack(fill=tk.X, pady=(4, 10))
 compress_cb = tk.Checkbutton(
-    opts, text="Compress",
+    opts, text="Compress (H.265)",
     variable=compress_var,
     bg=BG, fg=ORANGE, selectcolor=SURFACE2,
     activebackground=BG, activeforeground=ORANGE,
@@ -388,9 +419,17 @@ compress_cb = tk.Checkbutton(
 )
 compress_cb.pack(side=tk.LEFT)
 
-download_btn = btn(outer, "⬇  Download", download_videos, accent=True)
+# ── Action buttons row
+action_row = tk.Frame(outer, bg=BG)
+action_row.pack(pady=(4, 10))
+
+download_btn = btn(action_row, "⬇  Download", download_videos, accent=True)
 download_btn.config(font=("Consolas", 11, "bold"), pady=8)
-download_btn.pack(anchor="center", pady=(4, 10), ipadx=30)
+download_btn.pack(side=tk.LEFT, ipadx=30)
+
+open_btn = btn(action_row, "📂  Open Folder", open_output_folder)
+open_btn.config(font=("Consolas", 9, "bold"), pady=8)
+open_btn.pack(side=tk.LEFT, padx=(12, 0), ipadx=10)
 
 status_lbl = tk.Label(
     outer, textvariable=status_var,
@@ -421,10 +460,6 @@ def _status_cb(msg):
 def _log_cb(msg):
     root.after(0, lambda: log_write(msg))
 
-threading.Thread(
-    target=ensure_ytdlp,
-    args=(_status_cb, _log_cb),
-    daemon=True,
-).start()
+threading.Thread(target=ensure_ytdlp, args=(_status_cb, _log_cb), daemon=True).start()
 
 root.mainloop()
