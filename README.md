@@ -5,85 +5,162 @@
 </p>
 
 <p align="center">
-  A dead-simple, dark-themed GUI video downloader for Windows.<br/>
+  A dead-simple, dark-themed GUI video downloader.<br/>
   Paste a link. Hit Download. Done.
 </p>
 
+One codebase, one repository, native builds for both platforms: a Windows
+installer + portable exe, and a Linux AppImage + .deb. Every `v*` tag cuts
+all four artifacts via GitHub Actions.
+
+![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-informational?style=flat-square)
+
 ---
 
-## Download
+## Install a prebuilt release
 
-Grab the latest **CoveVideoDownloader.exe** from the [Releases](../../releases/latest) page. No install required — just run it.
+Head to the [Releases page](https://github.com/Sin213/cove-video-downloader/releases):
+
+| OS      | Artifact                                          | Notes                                            |
+| ------- | ------------------------------------------------- | ------------------------------------------------ |
+| Windows | `cove-video-downloader-<version>-Setup.exe`       | Inno Setup installer (Start Menu + Desktop)      |
+| Windows | `cove-video-downloader-<version>-Portable.exe`    | Single-file portable                             |
+| Linux   | `Cove-Video-Downloader-<version>-x86_64.AppImage` | `chmod +x` and run                               |
+| Linux   | `cove-video-downloader_<version>_amd64.deb`       | `sudo apt install ./cove-video-downloader_*.deb` |
+
+`ffmpeg` is bundled inside every artifact. `yt-dlp` is fetched on first
+launch and auto-updated thereafter. `HandBrakeCLI` is bundled on Windows;
+on Linux it's a Recommends-only dependency.
+
+> **Windows SmartScreen** may warn on first launch because the exe isn't
+> signed. Click **More info → Run anyway**.
 
 ---
 
 ## Features
 
 ### Highest quality, automatically
-No format pickers, no resolution menus. The app always grabs the best video and audio available — 4K, 1440p, 1080p, whatever the site offers — and merges them into a single MP4.
+No format pickers, no resolution menus. The app always grabs the best video
+and audio available — 4K, 1440p, 1080p, whatever the site offers — and
+merges them into a single MP4.
 
 ### One-click downloading
 Paste one or more video links and click **⬇ Download**. That's it.
 
 ### Smart paste — one link per line
-Add links two ways, both behave the same:
-- Click the **Paste** button
-- Use **Ctrl+V**
-
-Each new link lands on its own line automatically. No accidentally dumping a URL mid-line.
+Add links via the **Paste** button or **Ctrl+V** — each new link lands on
+its own line automatically.
 
 ### Bulk downloads
-Paste as many links as you want — one per line — and hit Download once. The app processes them all in order with live progress in the log.
+Paste as many links as you want — one per line — and hit Download once. The
+app processes them in order with live progress in the log.
 
 ### Optional H.265 compression
-The **Compress** checkbox (on by default) runs the downloaded video through HandBrake after downloading using H.265 (HEVC) at a web-balanced quality setting with AAC 192k audio — meaningfully smaller files with no visible quality loss. If the compressed file ends up *larger* than the original, it's automatically discarded and the original is kept.
+The **Compress** checkbox runs the downloaded video through HandBrakeCLI
+using H.265 (HEVC) at a web-balanced quality setting with AAC 192k audio.
+If the compressed file ends up *larger* than the original, it's automatically
+discarded and the original is kept.
 
 ### Auto-detected browser cookies
-The app automatically detects cookies from your installed browsers (Firefox, Chrome, Brave, Chromium, Edge) so it can access age-restricted or login-gated content without you doing anything. If a video still can't be accessed, a message will tell you to make sure you're logged in on a supported browser.
+The app automatically detects cookies from installed browsers (Firefox,
+Chrome, Brave, Chromium, Edge) for age-restricted or login-gated content.
 
 ### Custom output folder
-Choose exactly where your videos save with the **Browse** button. Defaults to your Downloads folder.
-
-### Open Folder button
-After a download completes, click **📂 Open Folder** to jump straight to where your files were saved.
+Choose exactly where your videos save with the **Browse** button. Defaults
+to your Downloads folder.
 
 ### Works on 1,000+ sites
-Powered by `yt-dlp` — YouTube, Reddit, X (Twitter), Instagram, TikTok, Facebook, Twitch, Vimeo, Dailymotion, Bilibili, Tumblr, and hundreds more. Just paste the link.
+Powered by `yt-dlp` — YouTube, Reddit, X (Twitter), Instagram, TikTok,
+Facebook, Twitch, Vimeo, Dailymotion, Bilibili, Tumblr, and hundreds more.
 
 ### Auto-updating yt-dlp
-Every time the app launches it silently checks for a newer version of `yt-dlp` and downloads it in the background if one is available. You're always on the latest extractor without doing anything.
-
-### Live log output
-A scrolling log shows real-time output from both the download and compression stages so you always know exactly what's happening.
+Every launch silently checks GitHub for a newer `yt-dlp` and downloads it in
+the background if one is available.
 
 ---
 
 ## Usage
 
-1. **Run** `CoveVideoDownloader.exe`
-2. **Copy** a video link from any site
-3. **Ctrl+V** or click **Paste**
-4. Repeat for as many links as you want
-5. *(Optional)* Click **Browse** to change the save folder
-6. Click **⬇ Download**
-7. Click **📂 Open Folder** to see your files
+1. **Run** the app.
+2. **Copy** a video link, paste it in with **Ctrl+V** or the **Paste** button.
+3. *(Optional)* Click **Browse** to change the save folder.
+4. Click **⬇ Download**.
+5. Click **📂 Open Folder** to see your files.
 
 ---
 
-## Notes
+## Running from source
 
-- All tools (yt-dlp, ffmpeg, HandBrakeCLI) are **bundled inside the EXE** — nothing to install.
-- yt-dlp is kept up to date automatically on every launch.
-- Browser cookies are detected automatically — no browser selection needed.
-- DRM-protected content (Netflix, Disney+, etc.) cannot be downloaded — platform-level restriction.
-- Videos save to your **Downloads** folder by default, or wherever you set with Browse.
+Python 3.10+, tkinter (stdlib — included on Windows; `python3-tk` on
+Debian/Ubuntu; bundled with Python on Arch).
+
+```bash
+# Linux
+sudo apt install python3-tk ffmpeg handbrake-cli   # or pacman / dnf equivalent
+python3 cove_video_downloader.py
+```
+
+```powershell
+# Windows
+py cove_video_downloader.py
+```
+
+yt-dlp is downloaded automatically into a per-user directory
+(`~/.cove-video-downloader` on Linux, `%APPDATA%\CoveVideoDownloader` on
+Windows).
+
+---
+
+## Building release artifacts
+
+PyInstaller can't cross-compile, so each platform has its own script.
+
+### Linux — AppImage + .deb
+
+```bash
+bash scripts/build-release.sh
+# Output in release/:
+#   Cove-Video-Downloader-1.0.0-x86_64.AppImage
+#   cove-video-downloader_1.0.0_amd64.deb
+```
+
+Override the version with `VERSION=1.2.0 bash scripts/build-release.sh`.
+
+### Windows — Setup.exe + Portable.exe
+
+Requires [Inno Setup 6](https://jrsoftware.org/isdl.php) and Chocolatey
+(HandBrakeCLI comes from `choco install handbrake-cli`). Both are
+pre-installed on GitHub Actions' `windows-latest`.
+
+```powershell
+.\build.ps1 -Version 1.0.0
+# Output in release\:
+#   cove-video-downloader-1.0.0-Setup.exe
+#   cove-video-downloader-1.0.0-Portable.exe
+```
+
+### Automated release via GitHub Actions
+
+Push a tag matching `v*` (e.g. `v1.0.0`) and `.github/workflows/release.yml`
+runs the Linux + Windows jobs in parallel and attaches all four artifacts to
+the GitHub Release created for the tag.
 
 ---
 
 ## Built with
 
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — download engine
-- [FFmpeg](https://ffmpeg.org) — audio/video merging
-- [HandBrake CLI](https://handbrake.fr) — optional H.265 compression
-- [Tkinter](https://docs.python.org/3/library/tkinter.html) — GUI (Python standard library)
-- [PyInstaller](https://pyinstaller.org) — Windows EXE packaging
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — download engine (auto-updated)
+- [FFmpeg](https://ffmpeg.org) — audio/video merging (bundled)
+- [HandBrakeCLI](https://handbrake.fr) — optional H.265 compression
+- [Tkinter](https://docs.python.org/3/library/tkinter.html) — GUI
+- [PyInstaller](https://pyinstaller.org) — packaging
+- [Inno Setup](https://jrsoftware.org/isinfo.php) — the Windows installer
+
+---
+
+## Notes
+
+- DRM-protected content (Netflix, Disney+, etc.) cannot be downloaded —
+  platform-level restriction.
+- Videos save to your **Downloads** folder by default.
