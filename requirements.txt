@@ -1,0 +1,6 @@
+# Cove Video Downloader uses only the Python standard library at runtime
+# (tkinter, urllib, subprocess, threading). yt-dlp is fetched on first launch
+# and auto-updated thereafter — it is not a Python dependency of the app.
+#
+# This file exists so scripts/build-release.sh has something to reference;
+# PyInstaller is installed separately by the build scripts.
