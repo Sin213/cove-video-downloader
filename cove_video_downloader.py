@@ -11,6 +11,10 @@ import urllib.request
 import json
 import shutil
 
+import app_updater
+
+__version__ = "1.1.0"
+
 # ── Color palette (dark theme) ─────────────────────────────────────────────
 BG          = "#141312"
 SURFACE     = "#1c1b19"
@@ -362,7 +366,7 @@ def open_output_folder():
 
 # ── Root window ────────────────────────────────────────────────────────────
 root = tk.Tk()
-root.title("Cove Video Downloader")
+root.title(f"Cove Video Downloader v{__version__}")
 root.geometry("860x640")
 root.configure(bg=BG)
 root.resizable(True, True)
@@ -483,5 +487,8 @@ def _log_cb(msg):
     root.after(0, lambda: log_write(msg))
 
 threading.Thread(target=ensure_ytdlp, args=(_status_cb, _log_cb), daemon=True).start()
+
+# Self-updater: poll our own GitHub releases a moment after the UI is up.
+root.after(4000, lambda: app_updater.start_background_check(root, __version__))
 
 root.mainloop()
