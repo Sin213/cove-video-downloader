@@ -11,7 +11,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-informational?style=flat-square)
-![Version](https://img.shields.io/badge/version-1.2.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.0.0-blue?style=flat-square)
 
 Cove Video Downloader is a thin, opinionated front-end over
 [`yt-dlp`](https://github.com/yt-dlp/yt-dlp). It picks the best quality
@@ -24,11 +24,12 @@ of small desktop tools.
 
 ---
 
-## What's new in v1.2.0
+## What's new in v2.0.0
 
-The whole app was rebuilt on Electron + React so it matches the rest of
-the Cove suite. The v1.0.0 `tkinter` GUI is gone; the interaction model is
-the same but every pixel of the UI is new.
+A clean semver reset for the Cove suite. v2.0.0 bundles the architectural
+rebuild (Electron + React) with the new format dropdowns and subtitle
+downloader. From this release forward, patch / minor / major bumps follow
+strict semver — bug-only fixes land as v2.0.x, new features as v2.x.0.
 
 - **New dark UI** built in React — custom title bar, window chrome, live
   per-item progress bars, and a structured log panel with colored tags.

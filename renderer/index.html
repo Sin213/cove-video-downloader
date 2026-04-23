@@ -246,9 +246,10 @@ const S = {
     borderRadius: 8, outline: "none", transition: "border-color 120ms",
   },
   pathRow: { display: "flex", gap: 8 },
-  seg: { display: "inline-flex", background: "#0a1013", border: "1px solid var(--border)", borderRadius: 8, padding: 3, gap: 2 },
+  seg: { display: "flex", width: "100%", background: "#0a1013", border: "1px solid var(--border)", borderRadius: 8, padding: 3, gap: 2 },
   segBtn: (on) => ({
-    padding: "6px 12px", fontSize: 12, fontWeight: 500, borderRadius: 6, border: "none", cursor: "pointer",
+    flex: "1 1 0", minWidth: 0, textAlign: "center",
+    padding: "6px 4px", fontSize: 11.5, fontWeight: 500, borderRadius: 6, border: "none", cursor: "pointer",
     background: on ? "#1c272d" : "transparent", color: on ? "var(--text)" : "var(--text-3)", transition: "all 120ms",
   }),
   toggleRow: {
@@ -285,6 +286,38 @@ const S = {
   },
   toolName: { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text)" },
   toolVer:  { fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-3)" },
+  dropdown: {
+    position: "relative", flex: 1, minWidth: 0,
+  },
+  dropdownBtn: (open) => ({
+    width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+    gap: 6, padding: "7px 10px", fontSize: 12.5, fontWeight: 500, fontFamily: "var(--mono)",
+    color: "var(--text)", background: "#0a1013",
+    border: `1px solid ${open ? "var(--accent)" : "var(--border)"}`,
+    borderRadius: 8, cursor: "pointer", transition: "border-color 120ms", outline: "none",
+  }),
+  dropdownChev: (open) => ({
+    transition: "transform 160ms", transform: open ? "rotate(180deg)" : "rotate(0deg)",
+    color: "var(--text-3)", flexShrink: 0,
+  }),
+  dropdownMenu: {
+    position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 20,
+    background: "#121a1f", border: "1px solid var(--border-hi)", borderRadius: 8,
+    padding: 4, display: "flex", flexDirection: "column", gap: 1,
+    boxShadow: "0 12px 28px rgba(0,0,0,0.45)", maxHeight: 260, overflowY: "auto",
+  },
+  dropdownOpt: (on) => ({
+    textAlign: "left", padding: "7px 10px", fontSize: 12.5, fontFamily: "var(--mono)",
+    fontWeight: 500, borderRadius: 6, border: "none", cursor: "pointer",
+    background: on ? "#1c272d" : "transparent",
+    color: on ? "var(--text)" : "var(--text-2)",
+    transition: "background 80ms",
+  }),
+  formatRow: { marginTop: 10, display: "flex", alignItems: "center", gap: 10 },
+  formatLabel: {
+    fontSize: 11.5, color: "var(--text-3)", textTransform: "uppercase",
+    letterSpacing: 0.6, fontWeight: 600, width: 64, flexShrink: 0,
+  },
 };
 
 const now = () => {
@@ -342,15 +375,72 @@ function Panel({ title, icon, right, children, style }) {
   );
 }
 
-function Toggle({ on, onChange, label, hint }) {
+function Toggle({ on, onChange, label, hint, disabled }) {
+  const handleClick = () => { if (!disabled) onChange(!on); };
   return (
-    <label style={S.toggleRow} onClick={() => onChange(!on)}>
-      <div style={S.toggle(on)}><div style={S.toggleDot(on)}/></div>
+    <label
+      style={{
+        ...S.toggleRow,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+      }}
+      onClick={handleClick}
+    >
+      <div style={S.toggle(on && !disabled)}><div style={S.toggleDot(on && !disabled)}/></div>
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 13, color: "var(--text)", fontWeight: 500 }}>{label}</div>
         {hint && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 2 }}>{hint}</div>}
       </div>
     </label>
+  );
+}
+
+function Dropdown({ value, options, onChange }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const close = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+  const current = options.find(o => o.v === value) || options[0];
+  return (
+    <div style={S.dropdown} ref={ref}>
+      <button style={S.dropdownBtn(open)} onClick={() => setOpen(!open)} type="button">
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {current?.label ?? value}
+        </span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+             style={S.dropdownChev(open)}>
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+      {open && (
+        <div style={S.dropdownMenu} role="listbox">
+          {options.map(o => (
+            <button
+              key={o.v}
+              type="button"
+              role="option"
+              aria-selected={o.v === value}
+              style={S.dropdownOpt(o.v === value)}
+              onClick={() => { onChange(o.v); setOpen(false); }}
+              onMouseEnter={(e) => { if (o.v !== value) e.currentTarget.style.background = "#16212a"; }}
+              onMouseLeave={(e) => { if (o.v !== value) e.currentTarget.style.background = "transparent"; }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -420,11 +510,14 @@ function CoveDownloader() {
   const [items,       setItems]       = React.useState([]);
   const [savePath,    setSavePath]    = React.useState("");
   const [quality,     setQuality]     = React.useState("Best");
+  const [videoFormat, setVideoFormat] = React.useState("mp4");
   const [audioFormat, setAudioFormat] = React.useState("mp3");
+  const [subFormat,   setSubFormat]   = React.useState("srt");
+  const [subLang,     setSubLang]     = React.useState("en");
   const [compress,    setCompress]    = React.useState(false);
   const [running,     setRunning]     = React.useState(false);
   const [draft,       setDraft]       = React.useState("");
-  const [version,     setVersion]     = React.useState("v1.2.0");
+  const [version,     setVersion]     = React.useState("v2.0.0");
   const [tools, setTools] = React.useState([
     { name: "yt-dlp",    v: "…", ok: null },
     { name: "ffmpeg",    v: "…", ok: null },
@@ -482,6 +575,9 @@ function CoveDownloader() {
             break;
         }
       });
+      // Tell main we're subscribed so it flushes any buffered events fired
+      // during React mount.
+      try { await API().ready(); } catch {}
     };
     boot();
     return () => { if (unsub) unsub(); };
@@ -559,7 +655,10 @@ function CoveDownloader() {
         quality,
         compress,
         savePath,
+        videoFormat,
         audioFormat,
+        subFormat,
+        subLang,
       });
       // running=false is set by the download_complete event from Python
     } catch (e) {
@@ -677,25 +776,78 @@ function CoveDownloader() {
 
             <label style={S.fieldLabel}>Quality</label>
             <div style={S.seg}>
-              {["Best","1080p","720p","480p","Audio"].map(q => (
+              {["Best","1080p","720p","480p","Audio","Subs"].map(q => (
                 <button key={q} style={S.segBtn(quality === q)} onClick={() => setQuality(q)}>{q}</button>
               ))}
             </div>
 
-            {quality === "Audio" && (
-              <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 11.5, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.6, fontWeight: 600 }}>Format</span>
-                <div style={{ ...S.seg, flex: 1 }}>
-                  {[
-                    { v: "mp3", label: ".mp3" },
-                    { v: "ogg", label: ".ogg" },
-                  ].map(o => (
-                    <button key={o.v} style={{...S.segBtn(audioFormat === o.v), flex: 1}} onClick={() => setAudioFormat(o.v)}>
-                      {o.label}
-                    </button>
-                  ))}
-                </div>
+            {quality !== "Audio" && quality !== "Subs" && (
+              <div style={S.formatRow}>
+                <span style={S.formatLabel}>Format</span>
+                <Dropdown
+                  value={videoFormat}
+                  onChange={setVideoFormat}
+                  options={[
+                    { v: "mp4",  label: ".mp4"  },
+                    { v: "webm", label: ".webm" },
+                    { v: "mkv",  label: ".mkv"  },
+                    { v: "mov",  label: ".mov"  },
+                    { v: "avi",  label: ".avi"  },
+                  ]}
+                />
               </div>
+            )}
+
+            {quality === "Audio" && (
+              <div style={S.formatRow}>
+                <span style={S.formatLabel}>Format</span>
+                <Dropdown
+                  value={audioFormat}
+                  onChange={setAudioFormat}
+                  options={[
+                    { v: "mp3",  label: ".mp3"  },
+                    { v: "opus", label: ".opus" },
+                    { v: "aac",  label: ".m4a"  },
+                    { v: "ogg",  label: ".ogg"  },
+                    { v: "flac", label: ".flac" },
+                    { v: "wav",  label: ".wav"  },
+                  ]}
+                />
+              </div>
+            )}
+
+            {quality === "Subs" && (
+              <>
+                <div style={S.formatRow}>
+                  <span style={S.formatLabel}>Format</span>
+                  <Dropdown
+                    value={subFormat}
+                    onChange={setSubFormat}
+                    options={[
+                      { v: "srt", label: ".srt" },
+                      { v: "vtt", label: ".vtt" },
+                      { v: "txt", label: ".txt" },
+                    ]}
+                  />
+                </div>
+                <div style={S.formatRow}>
+                  <span style={S.formatLabel}>Language</span>
+                  <Dropdown
+                    value={subLang}
+                    onChange={setSubLang}
+                    options={[
+                      { v: "en", label: "English" },
+                      { v: "es", label: "Spanish" },
+                      { v: "fr", label: "French" },
+                      { v: "de", label: "German" },
+                      { v: "pt", label: "Portuguese" },
+                      { v: "ja", label: "Japanese" },
+                      { v: "ko", label: "Korean" },
+                      { v: "zh", label: "Chinese (Simplified)" },
+                    ]}
+                  />
+                </div>
+              </>
             )}
 
             <div style={{ height:14 }}/>
@@ -703,8 +855,11 @@ function CoveDownloader() {
             <Toggle
               on={compress}
               onChange={setCompress}
+              disabled={quality === "Audio" || quality === "Subs"}
               label="H.265 compress"
-              hint="Compress after download (HandBrake)"
+              hint={quality === "Audio" ? "Not applicable for audio-only" :
+                    quality === "Subs"  ? "Not applicable for subtitles-only" :
+                    "Compress after download (HandBrake)"}
             />
           </Panel>
 
@@ -743,12 +898,6 @@ function CoveDownloader() {
                   <span style={S.toolVer}>{t.v}</span>
                 </div>
               ))}
-              <button
-                onClick={() => API()?.tools.checkUpdates()}
-                style={{ ...S.btn, ...S.btnGhost, marginTop:4, justifyContent:"center", padding:"8px 12px" }}
-              >
-                <IconRefresh size={13}/> Check for updates
-              </button>
             </div>
           </Panel>
 

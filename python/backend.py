@@ -6,7 +6,6 @@ object per line) on stdout. The Electron main process spawns this script
 and wires stdout lines to IPC events delivered to the renderer.
 
 Commands (Electron → Python, one JSON per stdin line):
-    {"cmd": "check_updates"}
     {"cmd": "start_download", "params": {...}}
     {"cmd": "cancel_download"}
 
@@ -36,7 +35,7 @@ if _HERE not in sys.path:
 
 from ssl_context import get_ssl_context
 
-__version__ = "1.2.0"
+__version__ = "2.0.0"
 
 
 # ── stdout/stderr helpers ──────────────────────────────────────────────────
@@ -132,6 +131,87 @@ def _download_to(url, dest):
         shutil.copyfileobj(r, f)
 
 
+# ── subtitle post-processing ───────────────────────────────────────────────
+# YouTube auto-captions are "rolling": each phrase appears in 2-3 consecutive
+# cues as it scrolls on-screen, so a raw SRT has each line repeated 2-3
+# times with millisecond gaps. We sliding-window over the parsed cues and
+# emit one cue per unique line spanning first-appearance → last-appearance,
+# which matches what downsub.com and similar tools produce.
+_SRT_TS_RE = re.compile(r"(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})")
+
+def _parse_srt(text):
+    cues, cur = [], None
+    for line in text.splitlines():
+        s = line.strip()
+        m = _SRT_TS_RE.match(s)
+        if m:
+            if cur: cues.append(cur)
+            cur = {"start": m.group(1), "end": m.group(2), "lines": []}
+        elif cur is not None and s and not s.isdigit():
+            cur["lines"].append(s)
+    if cur: cues.append(cur)
+    return cues
+
+def _dedupe_cues(cues):
+    """Sliding-window dedup: a line's span is extended while it keeps
+    appearing in consecutive cues; once it drops out, the span closes.
+    Different occurrences of the same text (e.g. a chorus, minutes apart)
+    correctly produce separate cues."""
+    out, active = [], {}
+    for cue in cues:
+        new_set = set(cue["lines"])
+        for t in list(active):
+            if t not in new_set:
+                del active[t]
+        for t in cue["lines"]:
+            if t in active:
+                out[active[t]]["end"] = cue["end"]
+            else:
+                out.append({"start": cue["start"], "end": cue["end"], "text": t})
+                active[t] = len(out) - 1
+    return out
+
+def _render_srt(cues):
+    parts = []
+    for i, c in enumerate(cues, 1):
+        parts.append(str(i))
+        parts.append(f"{c['start']} --> {c['end']}")
+        parts.append(c["text"])
+        parts.append("")
+    return "\n".join(parts).rstrip() + "\n"
+
+def _render_vtt(cues):
+    parts = ["WEBVTT", ""]
+    for c in cues:
+        start = c["start"].replace(",", ".")
+        end   = c["end"].replace(",", ".")
+        parts.append(f"{start} --> {end}")
+        parts.append(c["text"])
+        parts.append("")
+    return "\n".join(parts).rstrip() + "\n"
+
+def _render_txt(cues):
+    return "\n".join(c["text"] for c in cues) + "\n"
+
+def _postprocess_subs(srt_path, final_fmt):
+    """Read yt-dlp's raw SRT, dedupe, write to final format. Returns the
+    final file path (renaming/deleting the intermediate SRT as needed)."""
+    with open(srt_path, "r", encoding="utf-8") as f:
+        raw = f.read()
+    cues = _dedupe_cues(_parse_srt(raw))
+    if final_fmt == "vtt":
+        body, final_path = _render_vtt(cues), re.sub(r"\.srt$", ".vtt", srt_path)
+    elif final_fmt == "txt":
+        body, final_path = _render_txt(cues), re.sub(r"\.srt$", ".txt", srt_path)
+    else:
+        body, final_path = _render_srt(cues), srt_path
+    with open(final_path, "w", encoding="utf-8") as f:
+        f.write(body)
+    if final_path != srt_path and os.path.exists(srt_path):
+        os.remove(srt_path)
+    return final_path
+
+
 # ── cookie detection ───────────────────────────────────────────────────────
 # Detection is filesystem-based: we look for the cookie database yt-dlp would
 # read. This avoids a network round-trip per browser (the old `--simulate`
@@ -200,6 +280,29 @@ _busy   = False
 _busy_lock = threading.Lock()
 
 def _run_ytdlp_check():
+    """Probe tools + auto-update yt-dlp.
+
+    Emits tools_ready as soon as we have local versions probed, so the UI
+    lights up immediately — even if the GitHub update check is slow or
+    fails. Re-emits after a successful yt-dlp update to refresh the version
+    string.
+    """
+    def _snapshot_and_emit():
+        ffmpeg_ver = get_tool_version([get_tool("ffmpeg"), "-version"])
+        hb_ver     = get_tool_version([get_tool("HandBrakeCLI"), "--version"])
+        ytdlp_tag  = _ytdlp_current_tag() or "—"
+        emit({
+            "type": "tools_ready",
+            "ytdlp_tag":  ytdlp_tag,
+            "ffmpeg_ver": ffmpeg_ver,
+            "hb_ver":     hb_ver,
+        })
+
+    log("tools", f"yt-dlp    → {get_tool('yt-dlp')}", "dim")
+    log("tools", f"ffmpeg    → {get_tool('ffmpeg')}", "dim")
+    log("tools", f"HandBrake → {get_tool('HandBrakeCLI')}", "dim")
+    _snapshot_and_emit()
+
     try:
         log("yt-dlp", "Checking for updates...", "dim")
         tag, url = _ytdlp_fetch_latest()
@@ -216,20 +319,7 @@ def _run_ytdlp_check():
                 YTDLP_EXE.chmod(0o755)
             YTDLP_VER_F.write_text(tag)
             log("yt-dlp", f"{tag} installed.", "ok")
-
-        ytdlp_tag  = _ytdlp_current_tag() or tag
-        ffmpeg_ver = get_tool_version([get_tool("ffmpeg"), "-version"])
-        hb_ver     = get_tool_version([get_tool("HandBrakeCLI"), "--version"])
-
-        log("tools", f"yt-dlp    → {get_tool('yt-dlp')}", "dim")
-        log("tools", f"ffmpeg    → {get_tool('ffmpeg')}", "dim")
-        log("tools", f"HandBrake → {get_tool('HandBrakeCLI')}", "dim")
-        emit({
-            "type": "tools_ready",
-            "ytdlp_tag":  ytdlp_tag,
-            "ffmpeg_ver": ffmpeg_ver,
-            "hb_ver":     hb_ver,
-        })
+            _snapshot_and_emit()
         log("ready", "Ready. Paste links above to begin.", "ok")
     except Exception as e:
         log("yt-dlp", f"Auto-update failed: {e}", "err")
@@ -246,12 +336,33 @@ def _run_download(params):
         quality    = params.get("quality", "Best")
         compress   = bool(params.get("compress", False))
         save_to    = params.get("savePath") or str(Path.home() / "Downloads")
-        audio_req  = (params.get("audioFormat") or "mp3").lower()
+        video_fmt    = (params.get("videoFormat") or "mp4").lower()
+        audio_req    = (params.get("audioFormat") or "mp3").lower()
+        sub_fmt_req  = (params.get("subFormat")   or "srt").lower()
+        sub_lang     = (params.get("subLang")     or "en").lower()
+        if sub_fmt_req not in ("srt", "vtt", "txt"):
+            sub_fmt_req = "srt"
+        # We always ask yt-dlp for SRT so we can dedupe YouTube's rolling
+        # auto-caption cues uniformly, then render out to the user's chosen
+        # format in Python.
+        sub_fmt_ytdlp = "srt"
 
-        is_audio   = (quality == "Audio")
-        _amap      = {"mp3": ("mp3", "mp3"), "ogg": ("vorbis", "ogg"), "opus": ("opus", "opus")}
+        is_audio = (quality == "Audio")
+        is_subs  = (quality == "Subs")
+        # (ytdlp --audio-format token, output file extension)
+        _amap = {
+            "mp3":  ("mp3",    "mp3"),
+            "opus": ("opus",   "opus"),
+            "aac":  ("aac",    "m4a"),
+            "ogg":  ("vorbis", "ogg"),
+            "flac": ("flac",   "flac"),
+            "wav":  ("wav",    "wav"),
+        }
         ytdlp_afmt, audio_fmt = _amap.get(audio_req, ("mp3", "mp3"))
-        do_compress = compress and not is_audio
+        # avi/mov/etc. supported by --merge-output-format; default to mp4 if unknown
+        if video_fmt not in ("mp4", "webm", "mkv", "mov", "avi"):
+            video_fmt = "mp4"
+        do_compress = compress and not is_audio and not is_subs
 
         output_dir    = save_to
         ytdlp_bin     = get_tool("yt-dlp")
@@ -290,6 +401,17 @@ def _run_download(params):
                         "--audio-quality", "0",
                         "-o", output_template,
                     ]
+                elif is_subs:
+                    # Subtitles-only: no video, no audio. yt-dlp writes
+                    # <title>.<lang>.<fmt> alongside the output template.
+                    cmd = [
+                        ytdlp_bin,
+                        "--skip-download",
+                        "--write-subs", "--write-auto-subs",
+                        "--sub-langs", sub_lang,
+                        "--convert-subs", sub_fmt_ytdlp,
+                        "-o", output_template,
+                    ]
                 else:
                     fmt_map = {
                         "Best":  "bestvideo+bestaudio/best",
@@ -300,7 +422,7 @@ def _run_download(params):
                     cmd = [
                         ytdlp_bin,
                         "-f", fmt_map.get(quality, "bestvideo+bestaudio/best"),
-                        "--merge-output-format", "mp4",
+                        "--merge-output-format", video_fmt,
                         "--concurrent-fragments", "4",
                         "-o", output_template,
                     ]
@@ -347,14 +469,16 @@ def _run_download(params):
                             downloaded_file = m.group(1)
                     elif "[ExtractAudio] Destination:" in s:
                         downloaded_file = s.split("Destination:", 1)[1].strip()
-                    elif "[download] Destination:" in s and not is_audio:
+                    elif "Writing video subtitles to:" in s and is_subs:
+                        downloaded_file = s.split("to:", 1)[1].strip()
+                    elif "[download] Destination:" in s and not is_audio and not is_subs:
                         candidate = s.split("Destination:", 1)[1].strip()
-                        if candidate.endswith(".mp4"):
+                        if candidate.endswith(f".{video_fmt}"):
                             downloaded_file = candidate
                     elif "has already been downloaded" in s:
                         candidate = (s.replace("[download]", "")
                                       .replace("has already been downloaded", "").strip())
-                        if is_audio or candidate.endswith(".mp4"):
+                        if is_audio or candidate.endswith(f".{video_fmt}"):
                             downloaded_file = candidate
                     elif "login" in s.lower() or "sign in" in s.lower() or "403" in s:
                         cookie_error = True
@@ -372,13 +496,27 @@ def _run_download(params):
                     continue
 
                 if downloaded_file is None or not os.path.exists(downloaded_file):
-                    pattern = f"*.{audio_fmt}" if is_audio else "*.mp4"
+                    if is_audio:
+                        pattern = f"*.{audio_fmt}"
+                    elif is_subs:
+                        pattern = f"*.{sub_lang}*.{sub_fmt_ytdlp}"
+                    else:
+                        pattern = f"*.{video_fmt}"
                     candidates = sorted(
                         Path(output_dir).glob(pattern),
                         key=lambda p: p.stat().st_mtime, reverse=True,
                     )
                     if candidates:
                         downloaded_file = str(candidates[0])
+
+                # Subs post-processing: dedupe YouTube's rolling auto-caption
+                # cues and render out to the user's chosen final format.
+                if (is_subs and downloaded_file and os.path.exists(downloaded_file)
+                        and downloaded_file.endswith(".srt")):
+                    try:
+                        downloaded_file = _postprocess_subs(downloaded_file, sub_fmt_req)
+                    except Exception as e:
+                        log("subs", f"post-processing failed: {e}", "warn")
 
                 if do_compress and downloaded_file and os.path.exists(downloaded_file):
                     if not os.path.isfile(hbcli_bin):
@@ -455,10 +593,7 @@ def handle_command(cmd_obj):
     global _busy
     cmd = cmd_obj.get("cmd")
 
-    if cmd == "check_updates":
-        threading.Thread(target=_run_ytdlp_check, daemon=True).start()
-
-    elif cmd == "start_download":
+    if cmd == "start_download":
         with _busy_lock:
             if _busy:
                 log("dl", "A download is already in progress.", "warn")
