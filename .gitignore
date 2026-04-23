@@ -1,9 +1,19 @@
+# Electron / npm
+node_modules/
+
+# electron-builder output
+dist/
+release/
+
+# Fetched runtimes (ffmpeg, Python embed, HandBrakeCLI)
+runtimes/
+
+# Python backend
 __pycache__/
 *.pyc
 .venv/
+
+# Old PyInstaller leftovers (pre-v1.2.0)
 .buildenv/
-build/
-dist/
-release/
 *.spec
 cove_icon.ico
