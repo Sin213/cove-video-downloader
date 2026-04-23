@@ -1,6 +1,6 @@
-# Cove Video Downloader uses only the Python standard library at runtime
-# (tkinter, urllib, subprocess, threading). yt-dlp is fetched on first launch
-# and auto-updated thereafter — it is not a Python dependency of the app.
+# Cove Video Downloader — Python backend dependencies.
 #
-# This file exists so scripts/build-release.sh has something to reference;
-# PyInstaller is installed separately by the build scripts.
+# The backend uses only stdlib (urllib, subprocess, threading, json, ssl).
+# Modern Python on Linux/Windows finds system CA bundles automatically,
+# so we no longer vendor certifi. If you hit SSL verification errors on
+# an ancient platform, install certifi and ssl_context.py will pick it up.

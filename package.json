@@ -1,0 +1,94 @@
+{
+  "name": "cove-video-downloader",
+  "version": "1.2.0",
+  "description": "Dark-themed GUI video downloader powered by yt-dlp, with optional H.265 compression via HandBrakeCLI.",
+  "main": "main.js",
+  "author": {
+    "name": "Sin",
+    "email": "79215527+Sin213@users.noreply.github.com"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/Sin213/cove-video-downloader",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:linux": "node scripts/fetch-runtimes.js linux && electron-builder --linux",
+    "dist:win": "node scripts/fetch-runtimes.js win && electron-builder --win",
+    "release": "node scripts/fetch-runtimes.js linux && node scripts/fetch-runtimes.js win && electron-builder --linux --win --publish=always"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.sin.cove-video-downloader",
+    "productName": "Cove Video Downloader",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "python/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "python/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "runtimes/${os}",
+        "to": "runtime",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Sin213",
+        "repo": "cove-video-downloader"
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "AudioVideo",
+      "icon": "build/icon.png",
+      "artifactName": "Cove-Video-Downloader-${version}-${arch}.AppImage"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "portable": {
+      "artifactName": "Cove-Video-Downloader-${version}-Portable.exe"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "Cove Video Downloader",
+      "artifactName": "Cove-Video-Downloader-${version}-Setup.exe"
+    }
+  }
+}

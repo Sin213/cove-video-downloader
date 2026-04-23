@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Cove Video Downloader</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b1013;
+      --bg-2: #0e1518;
+      --panel: #121a1f;
+      --panel-2: #151d23;
+      --panel-hi: #192328;
+      --border: #1e2a31;
+      --border-hi: #27353d;
+      --text: #e6edf0;
+      --text-2: #a2b0b8;
+      --text-3: #6a7880;
+      --accent: #5eead4;
+      --accent-2: #2dd4bf;
+      --accent-ink: #052e2b;
+      --danger: #f87171;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --sans: "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      background:
+        radial-gradient(1200px 600px at 20% -10%, rgba(94,234,212,0.06), transparent 60%),
+        radial-gradient(900px 500px at 110% 10%, rgba(45,212,191,0.04), transparent 60%),
+        var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow: hidden;
+      user-select: none;
+    }
+    #root { height: 100%; display: flex; align-items: stretch; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1f2a30; border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: #2a3a42; background-clip: padding-box; border: 2px solid transparent; }
+    .focusable:focus-visible,
+    input:focus-visible, button:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    input, button, select, textarea { font-family: inherit; user-select: text; }
+    input, textarea { user-select: text; }
+    /* Electron frameless drag region: Chromium handles move/double-click-to-max
+       natively from these CSS rules — no JS required. */
+    .drag-region { -webkit-app-region: drag; app-region: drag; }
+    .no-drag     { -webkit-app-region: no-drag; app-region: no-drag; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+
+  <script type="text/babel">
+
+// ─── Icons ────────────────────────────────────────────────────────────────
+const Icon = ({ d, size = 16, stroke = 1.75, fill = "none", children, ...rest }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor"
+       strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" {...rest}>
+    {d ? <path d={d} /> : children}
+  </svg>
+);
+const IconDownload = (p) => <Icon {...p}><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></Icon>;
+const IconFolder    = (p) => <Icon {...p}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></Icon>;
+const IconFolderOpen= (p) => <Icon {...p}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1"/><path d="M3 9h18l-2 9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></Icon>;
+const IconClipboard = (p) => <Icon {...p}><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/></Icon>;
+const IconTrash     = (p) => <Icon {...p}><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></Icon>;
+const IconX         = (p) => <Icon {...p}><path d="M6 6l12 12"/><path d="M18 6l-12 12"/></Icon>;
+const IconMinus     = (p) => <Icon {...p}><path d="M5 12h14"/></Icon>;
+const IconCheck     = (p) => <Icon {...p}><path d="M5 12l5 5L20 7"/></Icon>;
+const IconLink      = (p) => <Icon {...p}><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></Icon>;
+const IconRefresh   = (p) => <Icon {...p}><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.3L3 16"/><path d="M3 21v-5h5"/></Icon>;
+const IconFilm      = (p) => <Icon {...p}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16"/><path d="M17 4v16"/><path d="M3 9h4"/><path d="M17 9h4"/><path d="M3 15h4"/><path d="M17 15h4"/></Icon>;
+const IconZap       = (p) => <Icon {...p}><path d="M13 2L3 14h7l-1 8 10-12h-7z" fill="currentColor" stroke="none"/></Icon>;
+const IconTerminal  = (p) => <Icon {...p}><path d="M4 17l5-5-5-5"/><path d="M12 19h8"/></Icon>;
+const IconDot = ({ size = 8, color = "currentColor" }) => (
+  <span style={{ display:"inline-block", width:size, height:size, borderRadius:"50%", background:color, flexShrink:0 }}/>
+);
+
+
+// ─── Window Chrome ────────────────────────────────────────────────────────
+// Electron (frame: false) + CSS -webkit-app-region gives us native drag,
+// double-click-to-maximize, edge resize — all for free. Just need to mark
+// the titlebar as draggable and the buttons as no-drag.
+
+const chromeStyles = {
+  shell: {
+    width: "100%", height: "100%",
+    background: "var(--bg-2)",
+    display: "flex", flexDirection: "column",
+    overflow: "hidden",
+  },
+  titleBar: {
+    height: 44, flexShrink: 0,
+    display: "grid",
+    gridTemplateColumns: "1fr auto 1fr",
+    alignItems: "center",
+    padding: "0 10px 0 14px",
+    background: "linear-gradient(#131c21, #0f161a)",
+    borderBottom: "1px solid var(--border)",
+  },
+  brand: { display: "flex", alignItems: "center", gap: 10, color: "var(--text-2)" },
+  brandBadge: {
+    width: 26, height: 26, borderRadius: 8,
+    background: "#0b1114", border: "1px solid var(--border-hi)",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    color: "var(--accent)",
+  },
+  titleText: {
+    fontSize: 13, fontWeight: 600, color: "var(--text)",
+    letterSpacing: 0.1, textAlign: "center",
+    display: "flex", alignItems: "center", gap: 8, justifyContent: "center",
+  },
+  version: {
+    fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-3)",
+    padding: "2px 7px", borderRadius: 6, background: "#0b1114", border: "1px solid var(--border)",
+  },
+  controls: { justifySelf: "end", display: "flex", alignItems: "center", gap: 2 },
+  ctrlBtn: {
+    width: 32, height: 28, borderRadius: 6,
+    display: "flex", alignItems: "center", justifyContent: "center",
+    color: "var(--text-2)", background: "transparent",
+    border: "none", cursor: "pointer",
+    transition: "background 120ms, color 120ms",
+    padding: 0,
+  },
+};
+
+function WindowChrome({ title, version, children, onMin, onMax, onClose }) {
+  const [hover, setHover] = React.useState(null);
+  const ctrlBtn = (key, hoverBg, hoverColor, icon, action) => (
+    <button
+      className="no-drag"
+      style={{
+        ...chromeStyles.ctrlBtn,
+        background: hover === key ? hoverBg : "transparent",
+        color: hover === key ? hoverColor : "var(--text-2)",
+      }}
+      onMouseEnter={() => setHover(key)}
+      onMouseLeave={() => setHover(null)}
+      onClick={action}
+    >{icon}</button>
+  );
+  return (
+    <div style={chromeStyles.shell}>
+      <div style={chromeStyles.titleBar} className="drag-region">
+        <div style={chromeStyles.brand}>
+          <div style={chromeStyles.brandBadge} className="no-drag">
+            <img src="assets/cove_icon.png" style={{ width:18, height:18, objectFit:"contain", display:"block" }} alt=""/>
+          </div>
+        </div>
+        <div style={chromeStyles.titleText}>
+          <span>{title}</span>
+          <span style={chromeStyles.version}>{version}</span>
+        </div>
+        <div style={chromeStyles.controls}>
+          {ctrlBtn("min",   "#1a2328", "var(--text)", <IconMinus size={14}/>, onMin)}
+          {ctrlBtn("max",   "#1a2328", "var(--text)", <div style={{width:10,height:10,border:"1.5px solid currentColor",borderRadius:2}}/>, onMax)}
+          {ctrlBtn("close", "#e11d48", "#fff",         <IconX size={14}/>, onClose)}
+        </div>
+      </div>
+      <div style={{ flex: 1, overflow: "hidden", background: "var(--bg-2)" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+
+// ─── Downloader styles ────────────────────────────────────────────────────
+const S = {
+  body: {
+    padding: 20,
+    height: "calc(100vh - 44px)",
+    overflow: "hidden",
+    display: "flex",
+    gap: 16,
+    boxSizing: "border-box",
+  },
+  mainCol: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0, flex: 1, overflow: "hidden" },
+  sideCol: { display: "flex", flexDirection: "column", gap: 14, flexShrink: 0, width: 340, overflowY: "auto", overflowX: "hidden" },
+  sub:     { margin: 0, fontSize: 13, color: "var(--text-3)" },
+  panel: {
+    background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, padding: 14, flexShrink: 0,
+  },
+  panelHead: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 12,
+  },
+  panelTitle: {
+    display: "flex", alignItems: "center", gap: 8,
+    fontSize: 12, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--text-3)",
+  },
+  linksArea: {
+    minHeight: 160, background: "#0a1013", border: "1px solid var(--border)",
+    borderRadius: 10, padding: 6, display: "flex", flexDirection: "column", overflow: "auto",
+  },
+  linksEmpty: {
+    flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+    gap: 8, color: "var(--text-3)", fontSize: 13, padding: "28px 12px", textAlign: "center",
+  },
+  linkRow: {
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "8px 10px", borderRadius: 8, fontFamily: "var(--mono)", fontSize: 12,
+  },
+  linkUrl: { flex: 1, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  linkMeta: { color: "var(--text-3)", fontSize: 11 },
+  progBar: { height: 4, background: "#0b1114", borderRadius: 2, overflow: "hidden", flexBasis: 120, minWidth: 80, flexShrink: 0 },
+  progFill: (pct, color) => ({ height: "100%", width: `${pct}%`, background: color, transition: "width 200ms linear", borderRadius: 2 }),
+  btn: {
+    display: "inline-flex", alignItems: "center", gap: 7,
+    padding: "8px 12px", fontSize: 12.5, fontWeight: 500,
+    borderRadius: 8, border: "1px solid var(--border-hi)",
+    background: "#141d22", color: "var(--text)", cursor: "pointer",
+    transition: "all 120ms", whiteSpace: "nowrap",
+  },
+  btnGhost:   { background: "transparent", border: "1px solid var(--border)", color: "var(--text-2)" },
+  btnPrimary: {
+    background: "var(--accent)", color: "var(--accent-ink)", border: "1px solid transparent",
+    fontWeight: 600, boxShadow: "0 1px 0 rgba(255,255,255,0.08) inset, 0 8px 20px rgba(94,234,212,0.18)",
+  },
+  btnDanger:  { background: "transparent", border: "1px solid #3b1f23", color: "#fca5a5" },
+  fieldLabel: {
+    display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-3)",
+    letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 6,
+  },
+  input: {
+    width: "100%", padding: "9px 12px", fontSize: 13, fontFamily: "var(--mono)",
+    color: "var(--text)", background: "#0a1013", border: "1px solid var(--border)",
+    borderRadius: 8, outline: "none", transition: "border-color 120ms",
+  },
+  pathRow: { display: "flex", gap: 8 },
+  seg: { display: "inline-flex", background: "#0a1013", border: "1px solid var(--border)", borderRadius: 8, padding: 3, gap: 2 },
+  segBtn: (on) => ({
+    padding: "6px 12px", fontSize: 12, fontWeight: 500, borderRadius: 6, border: "none", cursor: "pointer",
+    background: on ? "#1c272d" : "transparent", color: on ? "var(--text)" : "var(--text-3)", transition: "all 120ms",
+  }),
+  toggleRow: {
+    display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+    background: "#0a1013", border: "1px solid var(--border)", borderRadius: 8,
+    cursor: "pointer", userSelect: "none",
+  },
+  toggle: (on) => ({
+    width: 32, height: 18, borderRadius: 999, background: on ? "var(--accent)" : "#253137",
+    position: "relative", transition: "background 120ms", flexShrink: 0,
+  }),
+  toggleDot: (on) => ({
+    position: "absolute", top: 2, left: on ? 16 : 2, width: 14, height: 14, borderRadius: "50%",
+    background: on ? "var(--accent-ink)" : "#a2b0b8", transition: "left 160ms cubic-bezier(.5,.8,.4,1)",
+  }),
+  log: {
+    background: "#070b0d", border: "1px solid var(--border)", borderRadius: 10, padding: 12,
+    fontFamily: "var(--mono)", fontSize: 12, lineHeight: 1.6, color: "var(--text-2)",
+    flex: 1, overflow: "auto", minHeight: 160,
+    userSelect: "text", WebkitUserSelect: "text", cursor: "text",
+  },
+  logLine: { display: "flex", gap: 8, alignItems: "baseline" },
+  logTime: { color: "var(--text-3)", flexShrink: 0, width: 60 },
+  logTag: (tone) => ({
+    color: tone === "err"  ? "var(--danger)"
+         : tone === "ok"   ? "var(--accent)"
+         : tone === "warn" ? "var(--warn)"
+         : "var(--text-3)",
+    flexShrink: 0, minWidth: 64,
+  }),
+  toolRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "9px 12px", background: "#0a1013", border: "1px solid var(--border)", borderRadius: 8,
+  },
+  toolName: { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text)" },
+  toolVer:  { fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-3)" },
+};
+
+const now = () => {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
+};
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+const fmtBytes = (n) => {
+  if (!n || n < 1024) return n ? `${n} B` : "";
+  if (n < 1024*1024)        return `${(n/1024).toFixed(0)} KB`;
+  if (n < 1024*1024*1024)   return `${(n/1024/1024).toFixed(1)} MB`;
+  return `${(n/1024/1024/1024).toFixed(2)} GB`;
+};
+
+const API = () => window.coveAPI;
+
+// ─── Sub-components ───────────────────────────────────────────────────────
+function Btn({ children, variant = "default", icon, onClick, disabled, style }) {
+  const base = {
+    ...S.btn,
+    ...(variant === "primary" ? S.btnPrimary : {}),
+    ...(variant === "ghost"   ? S.btnGhost   : {}),
+    ...(variant === "danger"  ? S.btnDanger  : {}),
+    ...(disabled ? { opacity: 0.5, cursor: "not-allowed" } : {}),
+    ...style,
+  };
+  const [hover, setHover] = React.useState(false);
+  const hoverStyle = !disabled && hover ? (
+    variant === "primary" ? { background: "var(--accent-2)", transform: "translateY(-1px)" } :
+    variant === "danger"  ? { background: "#2a1418", color: "#fecaca" } :
+                            { background: "#1a2328", borderColor: "#30414a" }
+  ) : {};
+  return (
+    <button
+      style={{ ...base, ...hoverStyle }}
+      onClick={disabled ? undefined : onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >{icon}{children}</button>
+  );
+}
+
+function Panel({ title, icon, right, children, style }) {
+  return (
+    <section style={{ ...S.panel, ...style }}>
+      {(title || right) && (
+        <div style={S.panelHead}>
+          <div style={S.panelTitle}>{icon}{title}</div>
+          {right}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
+function Toggle({ on, onChange, label, hint }) {
+  return (
+    <label style={S.toggleRow} onClick={() => onChange(!on)}>
+      <div style={S.toggle(on)}><div style={S.toggleDot(on)}/></div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, color: "var(--text)", fontWeight: 500 }}>{label}</div>
+        {hint && <div style={{ fontSize: 11.5, color: "var(--text-3)", marginTop: 2 }}>{hint}</div>}
+      </div>
+    </label>
+  );
+}
+
+function LinkRow({ item, onRemove, onRedownload }) {
+  const [hover, setHover] = React.useState(false);
+  const { state } = item;
+  const tone =
+    state === "done"       ? "var(--accent)" :
+    state === "error"      ? "var(--danger)" :
+    state === "encoding"   ? "var(--warn)"   :
+    state === "downloading"|| state === "fetching" ? "#60a5fa" : "var(--text-3)";
+  const statusText =
+    state === "idle"         ? "queued" :
+    state === "fetching"     ? "fetching…" :
+    state === "downloading"  ? `${(item.pct||0).toFixed(0)}%${item.speed ? " · "+item.speed : ""}` :
+    state === "encoding"     ? `h.265 · ${(item.pct||0).toFixed(0)}%` :
+    state === "done"         ? `done${item.size ? " · "+fmtBytes(item.size) : ""}` :
+    state === "error"        ? (item.err || "error") : "";
+  return (
+    <div
+      style={{ ...S.linkRow, background: hover ? "#0f171b" : "transparent" }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <IconDot size={7} color={tone}/>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={S.linkUrl} title={item.url}>{item.url}</div>
+        <div style={{ ...S.linkMeta, marginTop: 2, display: "flex", gap: 8 }}>
+          <span style={{ color: tone }}>{statusText}</span>
+        </div>
+      </div>
+      {(state === "downloading" || state === "encoding" || state === "fetching") && (
+        <div style={S.progBar}><div style={S.progFill(item.pct||0, tone)}/></div>
+      )}
+      {state === "done" && <IconCheck size={14} stroke={2.2} style={{ color: "var(--accent)" }}/>}
+      {(state === "done" || state === "error") && (
+        <button
+          onClick={() => onRedownload(item.id)}
+          style={{
+            width:24, height:24, border:"none", background:"transparent",
+            color: hover ? "var(--text-2)" : "var(--text-3)",
+            cursor:"pointer", borderRadius:6,
+            display:"flex", alignItems:"center", justifyContent:"center",
+            transition:"color 120ms",
+          }}
+          title="Redownload with current settings"
+        ><IconRefresh size={12}/></button>
+      )}
+      <button
+        onClick={() => onRemove(item.id)}
+        style={{
+          width:24, height:24, border:"none", background:"transparent",
+          color: hover ? "var(--text-2)" : "transparent",
+          cursor:"pointer", borderRadius:6,
+          display:"flex", alignItems:"center", justifyContent:"center",
+          transition:"color 120ms",
+        }}
+        title="Remove"
+      ><IconX size={12}/></button>
+    </div>
+  );
+}
+
+
+// ─── Main component ───────────────────────────────────────────────────────
+function CoveDownloader() {
+  const [items,       setItems]       = React.useState([]);
+  const [savePath,    setSavePath]    = React.useState("");
+  const [quality,     setQuality]     = React.useState("Best");
+  const [audioFormat, setAudioFormat] = React.useState("mp3");
+  const [compress,    setCompress]    = React.useState(false);
+  const [running,     setRunning]     = React.useState(false);
+  const [draft,       setDraft]       = React.useState("");
+  const [version,     setVersion]     = React.useState("v1.2.0");
+  const [tools, setTools] = React.useState([
+    { name: "yt-dlp",    v: "…", ok: null },
+    { name: "ffmpeg",    v: "…", ok: null },
+    { name: "HandBrake", v: "…", ok: null },
+  ]);
+  const [log, setLog] = React.useState([]);
+  const logRef  = React.useRef(null);
+  const inputRef = React.useRef(null);
+
+  const updateItem = React.useCallback((id, patch) => {
+    setItems(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i));
+  }, []);
+
+  const pushLog = React.useCallback((entry) => {
+    setLog(l => [...l, { t: now(), ...entry }]);
+  }, []);
+
+  React.useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [log]);
+
+  // Initial state + subscribe to backend events
+  React.useEffect(() => {
+    let unsub = null;
+    const boot = async () => {
+      if (!API()) return;
+      try {
+        const state = await API().init();
+        if (state?.savePath) setSavePath(state.savePath);
+        if (state?.version)  setVersion(`v${state.version}`);
+      } catch {}
+      unsub = API().onEvent((event) => {
+        switch (event.type) {
+          case "log":
+            pushLog({ tag: event.tag, tone: event.tone, msg: event.msg });
+            break;
+          case "item_state":
+            updateItem(event.id, {
+              state: event.state,
+              pct:   event.pct   ?? 0,
+              speed: event.speed ?? "",
+              size:  event.size  ?? 0,
+              err:   event.err,
+            });
+            break;
+          case "download_complete":
+            setRunning(false);
+            break;
+          case "tools_ready":
+            setTools([
+              { name: "yt-dlp",    v: event.ytdlp_tag  || "—", ok: true },
+              { name: "ffmpeg",    v: event.ffmpeg_ver || "—", ok: true },
+              { name: "HandBrake", v: event.hb_ver     || "—", ok: true },
+            ]);
+            break;
+        }
+      });
+    };
+    boot();
+    return () => { if (unsub) unsub(); };
+  }, [updateItem, pushLog]);
+
+  // ── Link management ───────────────────────────────────────────────────
+  const addUrls = (text) => {
+    const urls = (text || "").split(/[\s\n]+/).filter(s => /^https?:\/\//i.test(s));
+    if (!urls.length) {
+      pushLog({ tag: "paste", tone: "warn", msg: "No valid URLs found." });
+      return;
+    }
+    const next = urls.map(u => ({ id: uid(), url: u, state: "idle", pct: 0, speed: "", size: 0 }));
+    setItems(prev => [...prev, ...next]);
+    pushLog({ tag: "paste", tone: "ok", msg: `Added ${urls.length} link${urls.length > 1 ? "s" : ""}.` });
+  };
+
+  const onPaste = async () => {
+    let text = "";
+    try {
+      if (navigator.clipboard?.readText) text = await navigator.clipboard.readText();
+    } catch {}
+    if (text) addUrls(text);
+  };
+
+  const onClear = () => {
+    if (!items.length) return;
+    setItems([]);
+    pushLog({ tag: "list", tone: "dim", msg: "Cleared all links." });
+  };
+
+  const removeItem = (id) => setItems(prev => prev.filter(i => i.id !== id));
+
+  const redownload = (id) => {
+    updateItem(id, { state: "idle", pct: 0, speed: "", size: 0, err: undefined });
+    pushLog({ tag: "queue", tone: "dim", msg: "Queued for redownload." });
+  };
+
+  const handleDraftKey = (e) => {
+    if (e.key === "Enter" && draft.trim()) {
+      addUrls(draft.trim());
+      setDraft("");
+    }
+  };
+
+  // ── Folder ────────────────────────────────────────────────────────────
+  const onBrowse = async () => {
+    if (!API()) return;
+    const p = await API().folder.browse(savePath);
+    if (p) {
+      setSavePath(p);
+      pushLog({ tag: "path", tone: "ok", msg: `Save folder → ${p}` });
+    }
+  };
+
+  const openFolder = async () => {
+    if (!API()) return;
+    await API().folder.open(savePath);
+    pushLog({ tag: "shell", tone: "dim", msg: `Opened ${savePath}` });
+  };
+
+  // ── Download ──────────────────────────────────────────────────────────
+  const runDownload = async () => {
+    const queue = items.filter(i => i.state === "idle" || i.state === "error");
+    if (!queue.length) {
+      pushLog({ tag: "dl", tone: "warn", msg: "Nothing to download. Add links first." });
+      return;
+    }
+    if (!API()) return;
+    setRunning(true);
+    queue.forEach(item => updateItem(item.id, { state: "fetching", pct: 0 }));
+    try {
+      await API().download.start({
+        urls:     queue.map(i => ({ id: i.id, url: i.url })),
+        quality,
+        compress,
+        savePath,
+        audioFormat,
+      });
+      // running=false is set by the download_complete event from Python
+    } catch (e) {
+      pushLog({ tag: "dl", tone: "err", msg: String(e) });
+      setRunning(false);
+    }
+  };
+
+  const nothingQueued = items.filter(i => i.state === "idle" || i.state === "error").length === 0;
+  const totalBytes    = items.reduce((s, i) => s + (i.size || 0), 0);
+  const doneCount     = items.filter(i => i.state === "done").length;
+
+  return (
+    <WindowChrome
+      title="Cove Video Downloader"
+      version={version}
+      onMin={   () => API()?.win.minimize()       }
+      onMax={   () => API()?.win.maximizeToggle() }
+      onClose={ () => API()?.win.close()          }
+    >
+      <div style={S.body}>
+        {/* ══ LEFT COLUMN ══ */}
+        <div style={S.mainCol}>
+          <p style={S.sub}>Paste one or more video URLs. Offline pipeline: yt-dlp → ffmpeg → HandBrake.</p>
+
+          {/* Link queue */}
+          <Panel
+            title="Video links"
+            icon={<IconLink size={13}/>}
+            right={
+              <div style={{ display:"flex", gap:6 }}>
+                <Btn variant="ghost" icon={<IconClipboard size={13}/>} onClick={onPaste}>Paste</Btn>
+                <Btn variant="danger" icon={<IconTrash size={13}/>} onClick={onClear} disabled={!items.length}>Clear</Btn>
+              </div>
+            }
+          >
+            <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+              <div style={{ flex:1, position:"relative" }}>
+                <IconLink size={13} style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:"var(--text-3)", pointerEvents:"none" }}/>
+                <input
+                  ref={inputRef}
+                  value={draft}
+                  onChange={e => setDraft(e.target.value)}
+                  onKeyDown={handleDraftKey}
+                  onPaste={e => { e.preventDefault(); const t = e.clipboardData.getData("text"); if(t) { addUrls(t); setDraft(""); } }}
+                  placeholder="Paste URL and press Enter…"
+                  style={{ ...S.input, paddingLeft:32 }}
+                />
+              </div>
+              <Btn
+                variant={draft.trim() ? "primary" : "ghost"}
+                onClick={() => { if(draft.trim()){ addUrls(draft.trim()); setDraft(""); } }}
+                disabled={!draft.trim()}
+              >Add</Btn>
+            </div>
+
+            <div style={S.linksArea}>
+              {items.length === 0 ? (
+                <div style={S.linksEmpty}>
+                  <div style={{ width:40, height:40, borderRadius:12, background:"#0f171b", border:"1px solid var(--border)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
+                    <IconFilm size={20}/>
+                  </div>
+                  <div>No links yet</div>
+                  <div style={{ fontSize:11.5 }}>YouTube, Vimeo, Twitter, and 1000+ sites via yt-dlp.</div>
+                </div>
+              ) : items.map(it => <LinkRow key={it.id} item={it} onRemove={removeItem} onRedownload={redownload}/>)}
+            </div>
+
+            {items.length > 0 && (
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:10, fontSize:11.5, color:"var(--text-3)" }}>
+                <span>{items.length} link{items.length !== 1 ? "s" : ""} · {doneCount} done</span>
+                {totalBytes > 0 && <span style={{ fontFamily:"var(--mono)" }}>{fmtBytes(totalBytes)} downloaded</span>}
+              </div>
+            )}
+          </Panel>
+
+          {/* Log */}
+          <Panel
+            title="Log"
+            icon={<IconTerminal size={13}/>}
+            style={{ flex: 1, display:"flex", flexDirection:"column", overflow:"hidden" }}
+            right={
+              <button onClick={() => setLog([])} style={{ background:"transparent", border:"none", color:"var(--text-3)", fontSize:11, cursor:"pointer", padding:4 }}>
+                clear
+              </button>
+            }
+          >
+            <div style={S.log} ref={logRef}>
+              {log.length === 0
+                ? <div style={{ color:"var(--text-3)" }}>— waiting for startup —</div>
+                : log.map((l, i) => (
+                  <div key={i} style={S.logLine}>
+                    <span style={S.logTime}>{l.t}</span>
+                    <span style={S.logTag(l.tone)}>[{l.tag}]</span>
+                    <span style={{ flex:1, wordBreak:"break-all" }}>{l.msg}</span>
+                  </div>
+                ))
+              }
+            </div>
+          </Panel>
+        </div>
+
+        {/* ══ RIGHT COLUMN ══ */}
+        <div style={S.sideCol}>
+
+          {/* Destination */}
+          <Panel title="Destination" icon={<IconFolder size={13}/>}>
+            <label style={S.fieldLabel}>Save to</label>
+            <div style={S.pathRow}>
+              <input value={savePath} onChange={e => setSavePath(e.target.value)} style={S.input}/>
+              <Btn variant="ghost" icon={<IconFolderOpen size={13}/>} onClick={onBrowse}>Browse</Btn>
+            </div>
+
+            <div style={{ height:14 }}/>
+
+            <label style={S.fieldLabel}>Quality</label>
+            <div style={S.seg}>
+              {["Best","1080p","720p","480p","Audio"].map(q => (
+                <button key={q} style={S.segBtn(quality === q)} onClick={() => setQuality(q)}>{q}</button>
+              ))}
+            </div>
+
+            {quality === "Audio" && (
+              <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 11.5, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: 0.6, fontWeight: 600 }}>Format</span>
+                <div style={{ ...S.seg, flex: 1 }}>
+                  {[
+                    { v: "mp3", label: ".mp3" },
+                    { v: "ogg", label: ".ogg" },
+                  ].map(o => (
+                    <button key={o.v} style={{...S.segBtn(audioFormat === o.v), flex: 1}} onClick={() => setAudioFormat(o.v)}>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{ height:14 }}/>
+
+            <Toggle
+              on={compress}
+              onChange={setCompress}
+              label="H.265 compress"
+              hint="Compress after download (HandBrake)"
+            />
+          </Panel>
+
+          {/* Actions */}
+          <Panel>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              <Btn
+                variant="primary"
+                icon={running ? null : <IconDownload size={14}/>}
+                onClick={runDownload}
+                disabled={running || (nothingQueued && items.length > 0)}
+                style={{ justifyContent:"center", padding:"11px 14px", fontSize:13.5 }}
+              >
+                {running ? "Downloading…" : (nothingQueued && items.length) ? "All done" : "Download"}
+              </Btn>
+              <Btn
+                variant="ghost"
+                icon={<IconFolderOpen size={14}/>}
+                onClick={openFolder}
+                style={{ justifyContent:"center", padding:"10px 14px" }}
+              >
+                Open folder
+              </Btn>
+            </div>
+          </Panel>
+
+          {/* Tooling */}
+          <Panel title="Tooling" icon={<IconZap size={13}/>}>
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+              {tools.map(t => (
+                <div key={t.name} style={S.toolRow}>
+                  <div style={S.toolName}>
+                    <IconDot size={7} color={t.ok === null ? "var(--text-3)" : t.ok ? "var(--accent)" : "var(--danger)"}/>
+                    {t.name}
+                  </div>
+                  <span style={S.toolVer}>{t.v}</span>
+                </div>
+              ))}
+              <button
+                onClick={() => API()?.tools.checkUpdates()}
+                style={{ ...S.btn, ...S.btnGhost, marginTop:4, justifyContent:"center", padding:"8px 12px" }}
+              >
+                <IconRefresh size={13}/> Check for updates
+              </button>
+            </div>
+          </Panel>
+
+        </div>
+      </div>
+    </WindowChrome>
+  );
+}
+
+
+// ─── Mount ────────────────────────────────────────────────────────────────
+ReactDOM.createRoot(document.getElementById("root")).render(<CoveDownloader/>);
+
+  </script>
+</body>
+</html>
