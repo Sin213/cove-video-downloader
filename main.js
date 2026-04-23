@@ -9,8 +9,31 @@ app.setName('Cove Video Downloader');
 app.setPath('userData', path.join(app.getPath('appData'), APP_ID));
 
 let mainWindow = null;
-let pyProc = null;     // Python backend child process
-let pyReady = false;   // flips true on first "ready" event
+let pyProc = null;        // Python backend child process
+let pyReady = false;      // flips true on first "ready" event
+// The backend emits the first few events (ready / tools_ready) within a few
+// hundred ms of spawn, which is often before the renderer has mounted React
+// and subscribed to cove:event. Events arriving before subscription are
+// dropped by Electron's IPC, so we buffer them here and flush once the
+// renderer signals it's ready via cove:ready.
+let rendererReady = false;
+let eventBuffer = [];
+
+function deliverEvent(event) {
+  if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('cove:event', event);
+  } else {
+    eventBuffer.push(event);
+  }
+}
+
+function flushEventBuffer() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  for (const event of eventBuffer) {
+    mainWindow.webContents.send('cove:event', event);
+  }
+  eventBuffer = [];
+}
 
 // ───────────────────────────── Python backend ─────────────────────────────
 
@@ -61,20 +84,14 @@ function spawnBackend() {
     let event;
     try { event = JSON.parse(line); } catch { return; }
     if (event.type === 'ready') pyReady = true;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('cove:event', event);
-    }
+    deliverEvent(event);
   });
 
   pyProc.stderr.on('data', (buf) => {
     const msg = buf.toString('utf8').trim();
     if (!msg) return;
     console.error('[cove.py]', msg);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('cove:event', {
-        type: 'log', tag: 'backend', tone: 'err', msg,
-      });
-    }
+    deliverEvent({ type: 'log', tag: 'backend', tone: 'err', msg });
   });
 
   pyProc.on('exit', (code, sig) => {
@@ -187,10 +204,10 @@ ipcMain.handle('cove:folder:open', async (_, folderPath) => {
   try { await shell.openPath(folderPath); } catch {}
 });
 
-// Downloads and tool checks route to Python
+// Downloads route to Python. yt-dlp auto-updates on backend startup, so
+// there's no separate "check for updates" IPC path.
 ipcMain.handle('cove:download:start',  (_, params) => sendCommand({ cmd: 'start_download',  params }));
 ipcMain.handle('cove:download:cancel', ()          => sendCommand({ cmd: 'cancel_download'         }));
-ipcMain.handle('cove:tools:check',     ()          => sendCommand({ cmd: 'check_updates'          }));
 
 // Initial state: default save path + app version + pending ready flag
 ipcMain.handle('cove:init', () => ({
@@ -198,3 +215,10 @@ ipcMain.handle('cove:init', () => ({
   savePath:  app.getPath('downloads'),
   backendReady: pyReady,
 }));
+
+// Renderer calls this AFTER it has subscribed to cove:event via onEvent,
+// so we flush any events the backend emitted during the React mount delay.
+ipcMain.handle('cove:ready', () => {
+  rendererReady = true;
+  flushEventBuffer();
+});

@@ -1,7 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('coveAPI', {
-  init: () => ipcRenderer.invoke('cove:init'),
+  init:  () => ipcRenderer.invoke('cove:init'),
+  // Must be called by the renderer AFTER onEvent() has been wired up.
+  // Tells main to flush any events that were buffered during React's mount.
+  ready: () => ipcRenderer.invoke('cove:ready'),
 
   folder: {
     browse: (initial) => ipcRenderer.invoke('cove:folder:browse', initial),
@@ -11,10 +14,6 @@ contextBridge.exposeInMainWorld('coveAPI', {
   download: {
     start:  (params) => ipcRenderer.invoke('cove:download:start', params),
     cancel: ()       => ipcRenderer.invoke('cove:download:cancel'),
-  },
-
-  tools: {
-    checkUpdates: () => ipcRenderer.invoke('cove:tools:check'),
   },
 
   win: {
