@@ -35,7 +35,7 @@ if _HERE not in sys.path:
 
 from ssl_context import get_ssl_context
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 
 
 # ── stdout/stderr helpers ──────────────────────────────────────────────────
@@ -347,6 +347,10 @@ def _run_download(params):
         # format in Python.
         sub_fmt_ytdlp = "srt"
 
+        # Cookies source: "auto" (detect), browser name ("firefox"/"chrome"/...),
+        # "none" (skip), or an absolute path to a Netscape cookies.txt file.
+        cookies_mode = (params.get("cookies") or "auto").strip()
+
         is_audio = (quality == "Audio")
         is_subs  = (quality == "Subs")
         # (ytdlp --audio-format token, output file extension)
@@ -382,7 +386,22 @@ def _run_download(params):
         if ffmpeg_loc:
             child_env["PATH"] = ffmpeg_loc + os.pathsep + child_env.get("PATH", "")
 
-        detected_browser = detect_browser_cookies(ytdlp_bin)
+        # Resolve the cookie source up-front. cookies_file wins over cookies_browser.
+        cookies_browser = None
+        cookies_file    = None
+        if cookies_mode == "none":
+            log("cookies", "Cookies disabled.", "dim")
+        elif cookies_mode == "auto" or cookies_mode == "":
+            cookies_browser = detect_browser_cookies(ytdlp_bin)
+        elif cookies_mode in BROWSERS:
+            cookies_browser = cookies_mode
+            log("cookies", f"Using {cookies_mode} cookies.", "ok")
+        elif os.path.isfile(cookies_mode):
+            cookies_file = cookies_mode
+            log("cookies", f"Using cookies file: {cookies_mode}", "ok")
+        else:
+            log("cookies", f"Unknown cookies source '{cookies_mode}' — proceeding without.", "warn")
+
         success = fail = 0
 
         for i, item in enumerate(urls, 1):
@@ -418,6 +437,7 @@ def _run_download(params):
                         "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
                         "720p":  "bestvideo[height<=720]+bestaudio/best[height<=720]",
                         "480p":  "bestvideo[height<=480]+bestaudio/best[height<=480]",
+                        "360p":  "bestvideo[height<=360]+bestaudio/best[height<=360]",
                     }
                     cmd = [
                         ytdlp_bin,
@@ -426,7 +446,7 @@ def _run_download(params):
                         "--concurrent-fragments", "4",
                         "-o", output_template,
                     ]
-                    if not detected_browser:
+                    if not cookies_browser and not cookies_file:
                         cmd.extend(["--extractor-args",
                                     "youtube:player_client=android_vr,android"])
 
@@ -434,8 +454,10 @@ def _run_download(params):
                     cmd.extend(["--ffmpeg-location", ffmpeg_loc])
                 if electron_node:
                     cmd.extend(["--js-runtimes", f"node:{electron_node}"])
-                if detected_browser:
-                    cmd.extend(["--cookies-from-browser", detected_browser])
+                if cookies_file:
+                    cmd.extend(["--cookies", cookies_file])
+                elif cookies_browser:
+                    cmd.extend(["--cookies-from-browser", cookies_browser])
                 cmd.append(url)
 
                 emit({"type": "item_state", "id": item_id,
@@ -480,15 +502,26 @@ def _run_download(params):
                                       .replace("has already been downloaded", "").strip())
                         if is_audio or candidate.endswith(f".{video_fmt}"):
                             downloaded_file = candidate
-                    elif "login" in s.lower() or "sign in" in s.lower() or "403" in s:
-                        cookie_error = True
+                    else:
+                        low = s.lower()
+                        # Explicit cookie-decrypt failures (Chrome 127+
+                        # app-bound encryption on Windows is the common one)
+                        # surface here too — treating them as cookie errors
+                        # lets the UI suggest the right fix (pick Firefox or
+                        # a cookies.txt file).
+                        if ("login" in low or "sign in" in low or "403" in s
+                                or "failed to decrypt" in low
+                                or "could not copy" in low
+                                or "dpapi" in low
+                                or "app-bound" in low):
+                            cookie_error = True
                     if s:
                         log("yt-dlp", s, "dim")
 
                 proc.wait()
                 if proc.returncode != 0:
                     fail += 1
-                    err_msg = ("Login required — sign in via Firefox/Chrome then retry."
+                    err_msg = ("Cookies issue — try picking Firefox or a cookies.txt file in Destination → Cookies."
                                if cookie_error else "Download failed.")
                     emit({"type": "item_state", "id": item_id,
                           "state": "error", "err": err_msg})

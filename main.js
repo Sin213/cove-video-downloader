@@ -204,6 +204,22 @@ ipcMain.handle('cove:folder:open', async (_, folderPath) => {
   try { await shell.openPath(folderPath); } catch {}
 });
 
+// Cookies file picker (Netscape cookies.txt exported from a browser extension).
+ipcMain.handle('cove:file:browseCookies', async () => {
+  if (!mainWindow) return null;
+  const res = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select cookies.txt',
+    defaultPath: app.getPath('downloads'),
+    properties: ['openFile'],
+    filters: [
+      { name: 'Cookies', extensions: ['txt'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  if (res.canceled || !res.filePaths.length) return null;
+  return res.filePaths[0];
+});
+
 // Downloads route to Python. yt-dlp auto-updates on backend startup, so
 // there's no separate "check for updates" IPC path.
 ipcMain.handle('cove:download:start',  (_, params) => sendCommand({ cmd: 'start_download',  params }));
