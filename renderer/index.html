@@ -90,6 +90,7 @@ const IconRefresh   = (p) => <Icon {...p}><path d="M3 12a9 9 0 0 1 15.5-6.3L21 8
 const IconFilm      = (p) => <Icon {...p}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16"/><path d="M17 4v16"/><path d="M3 9h4"/><path d="M17 9h4"/><path d="M3 15h4"/><path d="M17 15h4"/></Icon>;
 const IconZap       = (p) => <Icon {...p}><path d="M13 2L3 14h7l-1 8 10-12h-7z" fill="currentColor" stroke="none"/></Icon>;
 const IconTerminal  = (p) => <Icon {...p}><path d="M4 17l5-5-5-5"/><path d="M12 19h8"/></Icon>;
+const IconStop      = (p) => <Icon {...p}><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/></Icon>;
 const IconDot = ({ size = 8, color = "currentColor" }) => (
   <span style={{ display:"inline-block", width:size, height:size, borderRadius:"50%", background:color, flexShrink:0 }}/>
 );
@@ -208,8 +209,10 @@ const S = {
     fontSize: 12, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--text-3)",
   },
   linksArea: {
-    minHeight: 160, background: "#0a1013", border: "1px solid var(--border)",
-    borderRadius: 10, padding: 6, display: "flex", flexDirection: "column", overflow: "auto",
+    minHeight: 160, maxHeight: 360,
+    background: "#0a1013", border: "1px solid var(--border)",
+    borderRadius: 10, padding: 6, display: "flex", flexDirection: "column",
+    overflowY: "auto", overflowX: "hidden",
   },
   linksEmpty: {
     flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -517,7 +520,11 @@ function CoveDownloader() {
   const [compress,    setCompress]    = React.useState(false);
   const [running,     setRunning]     = React.useState(false);
   const [draft,       setDraft]       = React.useState("");
-  const [version,     setVersion]     = React.useState("v2.0.0");
+  const [version,     setVersion]     = React.useState("v2.1.0");
+  // Cookies source: "auto"/"firefox"/"chrome"/"brave"/"chromium"/"edge"/"none"
+  // or an absolute path to a Netscape cookies.txt file.
+  const [cookiesMode, setCookiesMode] = React.useState("auto");
+  const [cookiesFile, setCookiesFile] = React.useState("");
   const [tools, setTools] = React.useState([
     { name: "yt-dlp",    v: "…", ok: null },
     { name: "ffmpeg",    v: "…", ok: null },
@@ -565,6 +572,14 @@ function CoveDownloader() {
             break;
           case "download_complete":
             setRunning(false);
+            // Any item still mid-flight when the run ends (e.g. user hit
+            // Stop, or backend aborted) should fall back to idle so the UI
+            // doesn't show a stuck spinner.
+            setItems(prev => prev.map(it =>
+              (it.state === "fetching" || it.state === "downloading" || it.state === "encoding")
+                ? { ...it, state: "idle", pct: 0, speed: "" }
+                : it
+            ));
             break;
           case "tools_ready":
             setTools([
@@ -605,8 +620,20 @@ function CoveDownloader() {
 
   const onClear = () => {
     if (!items.length) return;
+    // If a run is in-flight, cancel the backend too — otherwise it'd keep
+    // grinding on URLs we no longer show.
+    if (running && API()?.download?.cancel) {
+      try { API().download.cancel(); } catch {}
+      pushLog({ tag: "dl", tone: "warn", msg: "Cancelling active downloads…" });
+    }
     setItems([]);
     pushLog({ tag: "list", tone: "dim", msg: "Cleared all links." });
+  };
+
+  const stopDownload = () => {
+    if (!API()?.download?.cancel) return;
+    try { API().download.cancel(); } catch {}
+    pushLog({ tag: "dl", tone: "warn", msg: "Stop requested — finishing current item, skipping the rest." });
   };
 
   const removeItem = (id) => setItems(prev => prev.filter(i => i.id !== id));
@@ -639,6 +666,26 @@ function CoveDownloader() {
     pushLog({ tag: "shell", tone: "dim", msg: `Opened ${savePath}` });
   };
 
+  // ── Cookies ───────────────────────────────────────────────────────────
+  const pickCookiesFile = async () => {
+    if (!API()?.file?.browseCookies) return;
+    const p = await API().file.browseCookies();
+    if (p) {
+      setCookiesFile(p);
+      setCookiesMode("file");
+      pushLog({ tag: "cookies", tone: "ok", msg: `Cookies file → ${p}` });
+    }
+  };
+
+  const onCookiesChange = (v) => {
+    if (v === "file") {
+      pickCookiesFile();
+      return;
+    }
+    setCookiesMode(v);
+    setCookiesFile("");
+  };
+
   // ── Download ──────────────────────────────────────────────────────────
   const runDownload = async () => {
     const queue = items.filter(i => i.state === "idle" || i.state === "error");
@@ -659,6 +706,7 @@ function CoveDownloader() {
         audioFormat,
         subFormat,
         subLang,
+        cookies: cookiesMode === "file" ? (cookiesFile || "none") : cookiesMode,
       });
       // running=false is set by the download_complete event from Python
     } catch (e) {
@@ -776,7 +824,7 @@ function CoveDownloader() {
 
             <label style={S.fieldLabel}>Quality</label>
             <div style={S.seg}>
-              {["Best","1080p","720p","480p","Audio","Subs"].map(q => (
+              {["Best","1080p","720p","480p","360p","Audio","Subs"].map(q => (
                 <button key={q} style={S.segBtn(quality === q)} onClick={() => setQuality(q)}>{q}</button>
               ))}
             </div>
@@ -852,6 +900,31 @@ function CoveDownloader() {
 
             <div style={{ height:14 }}/>
 
+            <label style={S.fieldLabel}>Cookies</label>
+            <Dropdown
+              value={cookiesMode}
+              onChange={onCookiesChange}
+              options={[
+                { v: "auto",     label: "Auto-detect" },
+                { v: "firefox",  label: "Firefox" },
+                { v: "chrome",   label: "Chrome" },
+                { v: "brave",    label: "Brave" },
+                { v: "chromium", label: "Chromium" },
+                { v: "edge",     label: "Edge" },
+                { v: "none",     label: "None" },
+                { v: "file",     label: cookiesMode === "file" && cookiesFile
+                  ? `File: ${cookiesFile.split(/[\\\/]/).pop()}`
+                  : "Cookies file…" },
+              ]}
+            />
+            {cookiesMode === "file" && cookiesFile && (
+              <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 6, wordBreak: "break-all", fontFamily: "var(--mono)" }}>
+                {cookiesFile}
+              </div>
+            )}
+
+            <div style={{ height:14 }}/>
+
             <Toggle
               on={compress}
               onChange={setCompress}
@@ -866,15 +939,26 @@ function CoveDownloader() {
           {/* Actions */}
           <Panel>
             <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-              <Btn
-                variant="primary"
-                icon={running ? null : <IconDownload size={14}/>}
-                onClick={runDownload}
-                disabled={running || (nothingQueued && items.length > 0)}
-                style={{ justifyContent:"center", padding:"11px 14px", fontSize:13.5 }}
-              >
-                {running ? "Downloading…" : (nothingQueued && items.length) ? "All done" : "Download"}
-              </Btn>
+              {running ? (
+                <Btn
+                  variant="danger"
+                  icon={<IconStop size={14}/>}
+                  onClick={stopDownload}
+                  style={{ justifyContent:"center", padding:"11px 14px", fontSize:13.5, borderColor:"#5b2027", color:"#fecaca" }}
+                >
+                  Stop all
+                </Btn>
+              ) : (
+                <Btn
+                  variant="primary"
+                  icon={<IconDownload size={14}/>}
+                  onClick={runDownload}
+                  disabled={nothingQueued && items.length > 0}
+                  style={{ justifyContent:"center", padding:"11px 14px", fontSize:13.5 }}
+                >
+                  {(nothingQueued && items.length) ? "All done" : "Download"}
+                </Btn>
+              )}
               <Btn
                 variant="ghost"
                 icon={<IconFolderOpen size={14}/>}

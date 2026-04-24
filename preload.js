@@ -11,6 +11,10 @@ contextBridge.exposeInMainWorld('coveAPI', {
     open:   (p)       => ipcRenderer.invoke('cove:folder:open',   p),
   },
 
+  file: {
+    browseCookies: () => ipcRenderer.invoke('cove:file:browseCookies'),
+  },
+
   download: {
     start:  (params) => ipcRenderer.invoke('cove:download:start', params),
     cancel: ()       => ipcRenderer.invoke('cove:download:cancel'),

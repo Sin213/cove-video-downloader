@@ -1,6 +1,6 @@
 {
   "name": "cove-video-downloader",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Dark-themed GUI video downloader powered by yt-dlp, with optional H.265 compression via HandBrakeCLI.",
   "main": "main.js",
   "author": {
@@ -56,11 +56,17 @@
     ],
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb"
       ],
       "category": "AudioVideo",
-      "icon": "build/icon.png",
+      "icon": "build/icon.png"
+    },
+    "appImage": {
       "artifactName": "Cove-Video-Downloader-${version}-${arch}.AppImage"
+    },
+    "deb": {
+      "artifactName": "Cove-Video-Downloader-${version}-${arch}.deb"
     },
     "win": {
       "target": [
