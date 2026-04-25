@@ -520,7 +520,8 @@ function CoveDownloader() {
   const [compress,    setCompress]    = React.useState(false);
   const [running,     setRunning]     = React.useState(false);
   const [draft,       setDraft]       = React.useState("");
-  const [version,     setVersion]     = React.useState("v2.1.0");
+  const [version,     setVersion]     = React.useState("v2.1.1");
+  const [videoCodec,  setVideoCodec]  = React.useState("auto");
   // Cookies source: "auto"/"firefox"/"chrome"/"brave"/"chromium"/"edge"/"none"
   // or an absolute path to a Netscape cookies.txt file.
   const [cookiesMode, setCookiesMode] = React.useState("auto");
@@ -703,6 +704,7 @@ function CoveDownloader() {
         compress,
         savePath,
         videoFormat,
+        videoCodec,
         audioFormat,
         subFormat,
         subLang,
@@ -830,20 +832,36 @@ function CoveDownloader() {
             </div>
 
             {quality !== "Audio" && quality !== "Subs" && (
-              <div style={S.formatRow}>
-                <span style={S.formatLabel}>Format</span>
-                <Dropdown
-                  value={videoFormat}
-                  onChange={setVideoFormat}
-                  options={[
-                    { v: "mp4",  label: ".mp4"  },
-                    { v: "webm", label: ".webm" },
-                    { v: "mkv",  label: ".mkv"  },
-                    { v: "mov",  label: ".mov"  },
-                    { v: "avi",  label: ".avi"  },
-                  ]}
-                />
-              </div>
+              <>
+                <div style={S.formatRow}>
+                  <span style={S.formatLabel}>Format</span>
+                  <Dropdown
+                    value={videoFormat}
+                    onChange={setVideoFormat}
+                    options={[
+                      { v: "mp4",  label: ".mp4"  },
+                      { v: "webm", label: ".webm" },
+                      { v: "mkv",  label: ".mkv"  },
+                      { v: "mov",  label: ".mov"  },
+                      { v: "avi",  label: ".avi"  },
+                    ]}
+                  />
+                </div>
+                <div style={S.formatRow}>
+                  <span style={S.formatLabel}>Codec</span>
+                  <Dropdown
+                    value={videoCodec}
+                    onChange={setVideoCodec}
+                    options={[
+                      { v: "auto", label: "Auto"        },
+                      { v: "h264", label: "H.264 (AVC)" },
+                      { v: "h265", label: "H.265 (HEVC)"},
+                      { v: "vp9",  label: "VP9"         },
+                      { v: "av1",  label: "AV1"         },
+                    ]}
+                  />
+                </div>
+              </>
             )}
 
             {quality === "Audio" && (

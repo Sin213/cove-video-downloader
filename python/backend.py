@@ -35,7 +35,7 @@ if _HERE not in sys.path:
 
 from ssl_context import get_ssl_context
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 
 
 # ── stdout/stderr helpers ──────────────────────────────────────────────────
@@ -337,6 +337,11 @@ def _run_download(params):
         compress   = bool(params.get("compress", False))
         save_to    = params.get("savePath") or str(Path.home() / "Downloads")
         video_fmt    = (params.get("videoFormat") or "mp4").lower()
+        # Codec preference: yt-dlp's `-S vcodec:<codec>` sorts the chosen
+        # codec first but falls back to the next-best if it's unavailable
+        # at the requested resolution — this keeps Auto behavior intact and
+        # gives users a soft preference rather than a hard filter.
+        video_codec  = (params.get("videoCodec") or "auto").lower()
         audio_req    = (params.get("audioFormat") or "mp3").lower()
         sub_fmt_req  = (params.get("subFormat")   or "srt").lower()
         sub_lang     = (params.get("subLang")     or "en").lower()
@@ -446,6 +451,17 @@ def _run_download(params):
                         "--concurrent-fragments", "4",
                         "-o", output_template,
                     ]
+                    # Codec preference. yt-dlp normalizes codec strings, so
+                    # "h264", "h265", "vp9", "av1" all match cleanly via
+                    # vcodec:<name>. "auto" leaves yt-dlp's default sort.
+                    codec_sort = {
+                        "h264": "vcodec:h264",
+                        "h265": "vcodec:h265",
+                        "vp9":  "vcodec:vp9",
+                        "av1":  "vcodec:av01",
+                    }.get(video_codec)
+                    if codec_sort:
+                        cmd.extend(["-S", codec_sort])
                     if not cookies_browser and not cookies_file:
                         cmd.extend(["--extractor-args",
                                     "youtube:player_client=android_vr,android"])
