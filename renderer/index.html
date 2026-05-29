@@ -815,10 +815,6 @@ function CoveDownloader() {
       <div style={S.body}>
         {/* ══ LEFT COLUMN ══ */}
         <div style={S.mainCol}>
-          <p style={S.sub}>{activeTab === "search"
-            ? "Search YouTube, select a result, add it to downloads, then choose video or audio."
-            : "Paste one or more video URLs. Offline pipeline: yt-dlp → ffmpeg → HandBrake."}</p>
-
           {/* Video Links / Search — tabbed panel */}
           <Panel style={{ flex: 1, flexShrink: 1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
             {/* Tab bar */}
@@ -1007,7 +1003,7 @@ function CoveDownloader() {
         <div style={S.sideCol}>
 
           {/* Destination */}
-          <Panel title="Destination" icon={<IconFolder size={13}/>} style={{ flex: 1 }}>
+          <Panel title="Destination" icon={<IconFolder size={13}/>}>
             <label style={S.fieldLabel}>Save to</label>
             <div style={S.pathRow}>
               <input value={savePath} onChange={e => setSavePath(e.target.value)} style={S.input}/>
@@ -1179,6 +1175,9 @@ function CoveDownloader() {
               </Btn>
             </div>
           </Panel>
+
+          {/* Elastic spacer — pushes Tooling to the bottom of the right column */}
+          <div style={{ flex: 1 }}/>
 
           {/* Tooling */}
           <Panel title="Tooling" icon={<IconZap size={13}/>}>
