@@ -17,3 +17,19 @@ __pycache__/
 .buildenv/
 *.spec
 cove_icon.ico
+
+# Local AI/audit scratch files
+.audit/
+codex-reviews/
+
+# Personal agent / workflow config
+CLAUDE.md
+WORKFLOW.md
+RELEASES.md
+AGENTS.md
+.claudeignore
+
+.codex-reviews/
+
+# Session aids (orientation snapshots)
+*-orientation.md

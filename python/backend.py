@@ -639,7 +639,7 @@ def _run_download(params):
 
 
 # ── YouTube search ─────────────────────────────────────────────────────────
-_SEARCH_PAGE_SIZE = 8
+_SEARCH_PAGE_SIZE = 10
 
 def _run_search(params):
     query = (params.get("query") or "").strip()

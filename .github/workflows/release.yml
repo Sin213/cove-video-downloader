@@ -34,23 +34,38 @@ jobs:
       - name: Install npm deps
         run: npm ci
 
-      - name: Build Linux AppImage
+      - name: Build Linux AppImage + deb
         run: npm run dist:linux -- --publish never
 
-      - name: Attach AppImage to GitHub Release
+      - name: Generate SHA256 checksums
+        run: |
+          cd release
+          for f in *.AppImage *.deb; do
+            [ -f "$f" ] && sha256sum "$f" > "$f.sha256"
+          done
+
+      - name: Attach Linux artifacts to GitHub Release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*.AppImage
+          files: |
+            release/*.AppImage
+            release/*.AppImage.sha256
+            release/*.deb
+            release/*.deb.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
 
-      - name: Upload AppImage as workflow artifact
+      - name: Upload Linux artifacts as workflow artifact
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
-          name: linux-appimage
-          path: release/*.AppImage
+          name: linux-builds
+          path: |
+            release/*.AppImage
+            release/*.AppImage.sha256
+            release/*.deb
+            release/*.deb.sha256
           if-no-files-found: error
 
   build-windows:
@@ -70,13 +85,23 @@ jobs:
       - name: Build Windows Setup + Portable
         run: npm run dist:win -- --publish never
 
+      - name: Generate SHA256 checksums
+        shell: bash
+        run: |
+          cd release
+          for f in *-Setup.exe *-Portable.exe; do
+            [ -f "$f" ] && sha256sum "$f" > "$f.sha256"
+          done
+
       - name: Attach Windows artifacts to GitHub Release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: |
             release/*-Setup.exe
+            release/*-Setup.exe.sha256
             release/*-Portable.exe
+            release/*-Portable.exe.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
 
@@ -87,5 +112,7 @@ jobs:
           name: windows-builds
           path: |
             release/*-Setup.exe
+            release/*-Setup.exe.sha256
             release/*-Portable.exe
+            release/*-Portable.exe.sha256
           if-no-files-found: error

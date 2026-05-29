@@ -11,7 +11,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-informational?style=flat-square)
-![Version](https://img.shields.io/badge/version-2.0.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.2.0-blue?style=flat-square)
 
 Cove Video Downloader is a thin, opinionated front-end over
 [`yt-dlp`](https://github.com/yt-dlp/yt-dlp). It picks the best quality
@@ -21,6 +21,32 @@ menus, no settings you don't need.
 
 Part of the [Cove](https://github.com/Sin213?tab=repositories&q=cove) suite
 of small desktop tools.
+
+---
+
+## What's new in v2.2.0
+
+**Search YouTube without leaving the app.** A new **Search** tab sits next
+to Video Links — type a query, browse paginated results with thumbnails and
+durations, select a video, and add it straight to the download queue. No API
+keys, no accounts, no cookies. Powered entirely by `yt-dlp`'s public search.
+
+<p align="center">
+  <img src="docs/screenshot-search.png" alt="YouTube search inside Cove" />
+</p>
+
+- **Built-in YouTube search** — type a query, see results with thumbnails,
+  channel names, and durations. Click to select, hit **+ Add to queue**, and
+  download with the same controls you already know.
+- **Unlimited pagination** — browse as deep as YouTube goes with `‹ ›`
+  page buttons. Each page fetches a fresh batch of 10 results from YouTube.
+- **Duplicate protection** — once a video is in the queue, the button
+  changes to **✓ In queue** so you can't accidentally add it twice.
+- **Collapsible log** — the log panel collapses to a single header bar,
+  giving the content area more room. Click to expand upward. Starts
+  collapsed by default.
+- **Tighter layout** — both columns pack cleanly with no wasted space.
+  Tooling aligns with the log bar. No scrollbar at default launch size.
 
 ---
 
@@ -72,6 +98,7 @@ Grab a build from the
 | Windows | `Cove-Video-Downloader-<version>-Setup.exe`       | NSIS installer — Start Menu + Desktop  |
 | Windows | `Cove-Video-Downloader-<version>-Portable.exe`    | Single-file, no install                |
 | Linux   | `Cove-Video-Downloader-<version>-x86_64.AppImage` | `chmod +x` and run                     |
+| Linux   | `Cove-Video-Downloader-<version>-amd64.deb`       | `sudo dpkg -i` on Debian/Ubuntu        |
 
 **Windows SmartScreen** may warn on first launch because the `.exe` isn't
 signed. Click **More info → Run anyway**.
@@ -92,6 +119,12 @@ signed. Click **More info → Run anyway**.
 ---
 
 ## Features
+
+### YouTube search
+Switch to the **Search** tab, type a query, and browse results — complete
+with thumbnails, channel names, and durations. Select a video and click
+**+ Add to queue** to drop it into the download queue. No API keys, no
+login, no cookies required.
 
 ### Best quality, automatically
 No format pickers. Cove always grabs the best video + audio available (4K,

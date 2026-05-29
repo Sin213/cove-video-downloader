@@ -337,7 +337,7 @@ const S = {
   },
   searchThumb: { width: 120, height: 68, borderRadius: 6, objectFit: "cover", flexShrink: 0, background: "#151d23" },
   searchResultRow: (on) => ({
-    display: "flex", gap: 10, padding: "3px 10px", borderRadius: 8, cursor: "pointer",
+    display: "flex", gap: 10, padding: "5px 10px", borderRadius: 8, cursor: "pointer",
     background: on ? "#1c272d" : "transparent", transition: "background 100ms", alignItems: "center",
   }),
   searchThumbSm: { width: 72, height: 40, borderRadius: 5, objectFit: "cover", flexShrink: 0, background: "#151d23" },
@@ -922,7 +922,7 @@ function CoveDownloader() {
                 )}
 
                 {/* Results list — backend-paginated, 10 per fetch, unlimited depth */}
-                <div style={{ ...S.linksArea, minHeight:160 }}>
+                <div style={{ ...S.linksArea }}>
                   {searching ? (
                     <div style={S.linksEmpty}>
                       <div style={{ color:"var(--text-3)", fontSize:13 }}>Searching…</div>
@@ -953,12 +953,12 @@ function CoveDownloader() {
                 {(searchStart > 1 || hasMoreResults) && (
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, paddingTop:4 }}>
                     <button
-                      onClick={() => goToPage(searchStart - 8)}
+                      onClick={() => goToPage(searchStart - 10)}
                       disabled={searchStart <= 1 || searching}
                       style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--text-2)", borderRadius:6, padding:"4px 10px", fontSize:13, cursor: searchStart <= 1 || searching ? "not-allowed" : "pointer", opacity: searchStart <= 1 || searching ? 0.4 : 1, transition:"all 120ms" }}
                     >‹</button>
                     <button
-                      onClick={() => goToPage(searchStart + 8)}
+                      onClick={() => goToPage(searchStart + 10)}
                       disabled={!hasMoreResults || searching}
                       style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--text-2)", borderRadius:6, padding:"4px 10px", fontSize:13, cursor: !hasMoreResults || searching ? "not-allowed" : "pointer", opacity: !hasMoreResults || searching ? 0.4 : 1, transition:"all 120ms" }}
                     >›</button>
@@ -1179,7 +1179,7 @@ function CoveDownloader() {
           </Panel>
 
           {/* Tooling */}
-          <Panel title="Tooling" icon={<IconZap size={13}/>}>
+          <Panel title="Tooling" icon={<IconZap size={13}/>} style={{ marginTop:"auto" }}>
             <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
               {tools.map(t => (
                 <div key={t.name} style={S.toolRow}>
