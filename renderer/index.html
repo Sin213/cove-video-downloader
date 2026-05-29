@@ -815,7 +815,7 @@ function CoveDownloader() {
         {/* ══ LEFT COLUMN ══ */}
         <div style={S.mainCol}>
           {/* Video Links / Search — tabbed panel */}
-          <Panel>
+          <Panel style={{ flex: 1, flexShrink: 1 }}>
             {/* Tab bar */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, borderBottom:"1px solid var(--border)", paddingBottom:0 }}>
               <div style={{ display:"flex", gap:0 }}>
@@ -913,7 +913,10 @@ function CoveDownloader() {
                       <div style={{ fontSize:13, fontWeight:600, color:"var(--text)", lineHeight:1.4, marginBottom:4, wordBreak:"break-word" }}>{selectedResult.title}</div>
                       {selectedResult.uploader && <div style={{ fontSize:11.5, color:"var(--text-3)", marginBottom:6 }}>{selectedResult.uploader}</div>}
                       {selectedResult.duration && <div style={{ fontSize:11, color:"var(--text-3)", fontFamily:"var(--mono)", marginBottom:8 }}>{fmtDuration(selectedResult.duration)}</div>}
-                      <Btn variant="primary" onClick={() => addSearchResult(selectedResult)}>+ Add to queue</Btn>
+                      {items.some(i => i.url === selectedResult.webpageUrl)
+                        ? <Btn variant="ghost" disabled>✓ In queue</Btn>
+                        : <Btn variant="primary" onClick={() => addSearchResult(selectedResult)}>+ Add to queue</Btn>
+                      }
                     </div>
                   </div>
                 )}
@@ -965,24 +968,10 @@ function CoveDownloader() {
             )}
           </Panel>
 
-          {/* Log — collapsible */}
+          {/* Log — collapsible, opens upward */}
           <section style={{ ...S.panel, ...(logCollapsed ? {} : { height: 180, display:"flex", flexDirection:"column", overflow:"hidden" }) }}>
-            <div
-              style={{ ...S.panelHead, cursor:"pointer", userSelect:"none" }}
-              onClick={() => setLogCollapsed(c => !c)}
-            >
-              <div style={S.panelTitle}>
-                <IconTerminal size={13}/>Log
-                <IconChevronD up={!logCollapsed} size={12} style={{ marginLeft:2, color:"var(--text-3)" }}/>
-              </div>
-              <div onClick={e => e.stopPropagation()}>
-                <button onClick={() => setLog([])} style={{ background:"transparent", border:"none", color:"var(--text-3)", fontSize:11, cursor:"pointer", padding:4 }}>
-                  clear
-                </button>
-              </div>
-            </div>
             {!logCollapsed && (
-              <div style={S.log} ref={logRef}>
+              <div style={{ ...S.log, flex: 1, marginBottom: 10 }} ref={logRef}>
                 {log.length === 0
                   ? <div style={{ color:"var(--text-3)" }}>— waiting for startup —</div>
                   : log.map((l, i) => (
@@ -995,6 +984,20 @@ function CoveDownloader() {
                 }
               </div>
             )}
+            <div
+              style={{ ...S.panelHead, cursor:"pointer", userSelect:"none", marginBottom: 0 }}
+              onClick={() => setLogCollapsed(c => !c)}
+            >
+              <div style={S.panelTitle}>
+                <IconTerminal size={13}/>Log
+                <IconChevronD up={logCollapsed} size={12} style={{ marginLeft:2, color:"var(--text-3)" }}/>
+              </div>
+              <div onClick={e => e.stopPropagation()}>
+                <button onClick={() => setLog([])} style={{ background:"transparent", border:"none", color:"var(--text-3)", fontSize:11, cursor:"pointer", padding:4 }}>
+                  clear
+                </button>
+              </div>
+            </div>
           </section>
         </div>
 
