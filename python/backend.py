@@ -36,7 +36,7 @@ if _HERE not in sys.path:
 
 from ssl_context import get_ssl_context
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 
 # ── stdout/stderr helpers ──────────────────────────────────────────────────

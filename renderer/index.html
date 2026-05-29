@@ -4,9 +4,7 @@
   <meta charset="utf-8" />
   <title>Cove Video Downloader</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="fonts/fonts.css">
   <style>
     :root {
       --bg: #0b1013;
@@ -64,9 +62,9 @@
 <body>
   <div id="root"></div>
 
-  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y"></script>
 
   <script type="text/babel">
 
@@ -548,7 +546,7 @@ function CoveDownloader() {
   const [compress,    setCompress]    = React.useState(false);
   const [running,     setRunning]     = React.useState(false);
   const [draft,       setDraft]       = React.useState("");
-  const [version,     setVersion]     = React.useState("v2.2.0");
+  const [version,     setVersion]     = React.useState("v2.3.0");
   const [videoCodec,  setVideoCodec]  = React.useState("auto");
   // Cookies source: "auto"/"firefox"/"chrome"/"brave"/"chromium"/"edge"/"none"
   // or an absolute path to a Netscape cookies.txt file.
