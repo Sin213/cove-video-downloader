@@ -224,6 +224,7 @@ ipcMain.handle('cove:file:browseCookies', async () => {
 // there's no separate "check for updates" IPC path.
 ipcMain.handle('cove:download:start',  (_, params) => sendCommand({ cmd: 'start_download',  params }));
 ipcMain.handle('cove:download:cancel', ()          => sendCommand({ cmd: 'cancel_download'         }));
+ipcMain.handle('cove:search:run',      (_, query, start) => sendCommand({ cmd: 'search', params: { query, start } }));
 
 // Initial state: default save path + app version + pending ready flag
 ipcMain.handle('cove:init', () => ({

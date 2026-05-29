@@ -91,6 +91,8 @@ const IconFilm      = (p) => <Icon {...p}><rect x="3" y="4" width="18" height="1
 const IconZap       = (p) => <Icon {...p}><path d="M13 2L3 14h7l-1 8 10-12h-7z" fill="currentColor" stroke="none"/></Icon>;
 const IconTerminal  = (p) => <Icon {...p}><path d="M4 17l5-5-5-5"/><path d="M12 19h8"/></Icon>;
 const IconStop      = (p) => <Icon {...p}><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/></Icon>;
+const IconSearch    = (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></Icon>;
+const IconChevronD  = ({ up, ...p }) => <Icon {...p}><path d={up ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"}/></Icon>;
 const IconDot = ({ size = 8, color = "currentColor" }) => (
   <span style={{ display:"inline-block", width:size, height:size, borderRadius:"50%", background:color, flexShrink:0 }}/>
 );
@@ -209,7 +211,7 @@ const S = {
     fontSize: 12, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--text-3)",
   },
   linksArea: {
-    minHeight: 160, maxHeight: 360,
+    minHeight: 160, flex: 1,
     background: "#0a1013", border: "1px solid var(--border)",
     borderRadius: 10, padding: 6, display: "flex", flexDirection: "column",
     overflowY: "auto", overflowX: "hidden",
@@ -321,6 +323,24 @@ const S = {
     fontSize: 11.5, color: "var(--text-3)", textTransform: "uppercase",
     letterSpacing: 0.6, fontWeight: 600, width: 64, flexShrink: 0,
   },
+  tabBtn: (on) => ({
+    display: "inline-flex", alignItems: "center", gap: 6,
+    padding: "5px 12px", fontSize: 12, fontWeight: on ? 600 : 500,
+    background: "transparent", border: "none",
+    borderBottom: on ? "2px solid var(--accent)" : "2px solid transparent",
+    cursor: "pointer", color: on ? "var(--accent)" : "var(--text-3)",
+    borderRadius: 0, transition: "color 120ms, border-color 120ms", flexShrink: 0,
+  }),
+  searchCard: {
+    background: "#0a1013", border: "1px solid var(--accent)", borderRadius: 10,
+    padding: 12, display: "flex", gap: 12, alignItems: "flex-start",
+  },
+  searchThumb: { width: 120, height: 68, borderRadius: 6, objectFit: "cover", flexShrink: 0, background: "#151d23" },
+  searchResultRow: (on) => ({
+    display: "flex", gap: 10, padding: "3px 10px", borderRadius: 8, cursor: "pointer",
+    background: on ? "#1c272d" : "transparent", transition: "background 100ms", alignItems: "center",
+  }),
+  searchThumbSm: { width: 72, height: 40, borderRadius: 5, objectFit: "cover", flexShrink: 0, background: "#151d23" },
 };
 
 const now = () => {
@@ -334,6 +354,14 @@ const fmtBytes = (n) => {
   if (n < 1024*1024)        return `${(n/1024).toFixed(0)} KB`;
   if (n < 1024*1024*1024)   return `${(n/1024/1024).toFixed(1)} MB`;
   return `${(n/1024/1024/1024).toFixed(2)} GB`;
+};
+
+const fmtDuration = (sec) => {
+  if (!sec) return "";
+  const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+  return m >= 60
+    ? `${Math.floor(m/60)}:${String(m%60).padStart(2,"0")}:${String(s).padStart(2,"0")}`
+    : `${m}:${String(s).padStart(2,"0")}`;
 };
 
 const API = () => window.coveAPI;
@@ -520,12 +548,22 @@ function CoveDownloader() {
   const [compress,    setCompress]    = React.useState(false);
   const [running,     setRunning]     = React.useState(false);
   const [draft,       setDraft]       = React.useState("");
-  const [version,     setVersion]     = React.useState("v2.1.1");
+  const [version,     setVersion]     = React.useState("v2.2.0");
   const [videoCodec,  setVideoCodec]  = React.useState("auto");
   // Cookies source: "auto"/"firefox"/"chrome"/"brave"/"chromium"/"edge"/"none"
   // or an absolute path to a Netscape cookies.txt file.
   const [cookiesMode, setCookiesMode] = React.useState("auto");
   const [cookiesFile, setCookiesFile] = React.useState("");
+  const [activeTab,      setActiveTab]      = React.useState("links");
+  const [logCollapsed,   setLogCollapsed]   = React.useState(true);
+  const [searchQuery,    setSearchQuery]    = React.useState("");
+  const [searching,      setSearching]      = React.useState(false);
+  const [searchResults,  setSearchResults]  = React.useState([]);
+  const [selectedResult, setSelectedResult] = React.useState(null);
+  const [lastSearch,     setLastSearch]     = React.useState("");
+  const [searchStart,    setSearchStart]    = React.useState(1);
+  const [hasMoreResults, setHasMoreResults] = React.useState(false);
+  const lastSearchRef = React.useRef("");
   const [tools, setTools] = React.useState([
     { name: "yt-dlp",    v: "…", ok: null },
     { name: "ffmpeg",    v: "…", ok: null },
@@ -589,6 +627,13 @@ function CoveDownloader() {
               { name: "HandBrake", v: event.hb_ver     || "—", ok: true },
             ]);
             break;
+          case "search_results":
+            if (event.query === lastSearchRef.current) {
+              setSearchResults(event.results || []);
+              setHasMoreResults(event.has_more || false);
+              setSearching(false);
+            }
+            break;
         }
       });
       // Tell main we're subscribed so it flushes any buffered events fired
@@ -649,6 +694,44 @@ function CoveDownloader() {
       addUrls(draft.trim());
       setDraft("");
     }
+  };
+
+  // ── Search ────────────────────────────────────────────────────────────
+  const _doSearch = async (q, start) => {
+    setSearching(true);
+    setSearchResults([]);
+    try {
+      const ok = await API().search.run(q, start);
+      if (!ok) {
+        pushLog({ tag: "search", tone: "err", msg: "Search failed — backend unavailable." });
+        setSearching(false);
+      }
+    } catch (e) {
+      pushLog({ tag: "search", tone: "err", msg: `Search error: ${String(e)}` });
+      setSearching(false);
+    }
+  };
+  const runSearch = async () => {
+    const q = searchQuery.trim();
+    if (!q || searching || !API()) return;
+    lastSearchRef.current = q;
+    setLastSearch(q);
+    setSearchStart(1);
+    setSelectedResult(null);
+    setHasMoreResults(false);
+    _doSearch(q, 1);
+  };
+  const goToPage = (start) => {
+    const q = lastSearchRef.current;
+    if (!q || searching || !API()) return;
+    setSearchStart(start);
+    setSelectedResult(null);
+    _doSearch(q, start);
+  };
+  const onSearchKey = (e) => { if (e.key === "Enter") runSearch(); };
+  const addSearchResult = (result) => {
+    addUrls(result.webpageUrl);
+    setActiveTab("links");
   };
 
   // ── Folder ────────────────────────────────────────────────────────────
@@ -732,90 +815,199 @@ function CoveDownloader() {
       <div style={S.body}>
         {/* ══ LEFT COLUMN ══ */}
         <div style={S.mainCol}>
-          <p style={S.sub}>Paste one or more video URLs. Offline pipeline: yt-dlp → ffmpeg → HandBrake.</p>
+          <p style={S.sub}>{activeTab === "search"
+            ? "Search YouTube, select a result, add it to downloads, then choose video or audio."
+            : "Paste one or more video URLs. Offline pipeline: yt-dlp → ffmpeg → HandBrake."}</p>
 
-          {/* Link queue */}
-          <Panel
-            title="Video links"
-            icon={<IconLink size={13}/>}
-            right={
-              <div style={{ display:"flex", gap:6 }}>
-                <Btn variant="ghost" icon={<IconClipboard size={13}/>} onClick={onPaste}>Paste</Btn>
-                <Btn variant="danger" icon={<IconTrash size={13}/>} onClick={onClear} disabled={!items.length}>Clear</Btn>
+          {/* Video Links / Search — tabbed panel */}
+          <Panel style={{ flex: 1, flexShrink: 1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+            {/* Tab bar */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, borderBottom:"1px solid var(--border)", paddingBottom:0 }}>
+              <div style={{ display:"flex", gap:0 }}>
+                <button style={S.tabBtn(activeTab === "links")} onClick={() => setActiveTab("links")}>
+                  <IconLink size={12}/>Video Links
+                </button>
+                <button style={S.tabBtn(activeTab === "search")} onClick={() => setActiveTab("search")}>
+                  <IconSearch size={12}/>Search
+                </button>
               </div>
-            }
-          >
-            <div style={{ display:"flex", gap:8, marginBottom:10 }}>
-              <div style={{ flex:1, position:"relative" }}>
-                <IconLink size={13} style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:"var(--text-3)", pointerEvents:"none" }}/>
-                <input
-                  ref={inputRef}
-                  value={draft}
-                  onChange={e => setDraft(e.target.value)}
-                  onKeyDown={handleDraftKey}
-                  onPaste={e => { e.preventDefault(); const t = e.clipboardData.getData("text"); if(t) { addUrls(t); setDraft(""); } }}
-                  placeholder="Paste URL and press Enter…"
-                  style={{ ...S.input, paddingLeft:32 }}
-                />
-              </div>
-              <Btn
-                variant={draft.trim() ? "primary" : "ghost"}
-                onClick={() => { if(draft.trim()){ addUrls(draft.trim()); setDraft(""); } }}
-                disabled={!draft.trim()}
-              >Add</Btn>
-            </div>
-
-            <div style={S.linksArea}>
-              {items.length === 0 ? (
-                <div style={S.linksEmpty}>
-                  <div style={{ width:40, height:40, borderRadius:12, background:"#0f171b", border:"1px solid var(--border)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
-                    <IconFilm size={20}/>
-                  </div>
-                  <div>No links yet</div>
-                  <div style={{ fontSize:11.5 }}>YouTube, Vimeo, Twitter, and 1000+ sites via yt-dlp.</div>
+              {activeTab === "links" && (
+                <div style={{ display:"flex", gap:6, paddingBottom:3 }}>
+                  <Btn variant="ghost" icon={<IconClipboard size={13}/>} onClick={onPaste}>Paste</Btn>
+                  <Btn variant="danger" icon={<IconTrash size={13}/>} onClick={onClear} disabled={!items.length}>Clear</Btn>
                 </div>
-              ) : items.map(it => <LinkRow key={it.id} item={it} onRemove={removeItem} onRedownload={redownload}/>)}
+              )}
             </div>
 
-            {items.length > 0 && (
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:10, fontSize:11.5, color:"var(--text-3)" }}>
-                <span>{items.length} link{items.length !== 1 ? "s" : ""} · {doneCount} done</span>
-                {totalBytes > 0 && <span style={{ fontFamily:"var(--mono)" }}>{fmtBytes(totalBytes)} downloaded</span>}
+            {/* ── Video Links tab ── */}
+            {activeTab === "links" && (
+              <>
+                <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+                  <div style={{ flex:1, position:"relative" }}>
+                    <IconLink size={13} style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:"var(--text-3)", pointerEvents:"none" }}/>
+                    <input
+                      ref={inputRef}
+                      value={draft}
+                      onChange={e => setDraft(e.target.value)}
+                      onKeyDown={handleDraftKey}
+                      onPaste={e => { e.preventDefault(); const t = e.clipboardData.getData("text"); if(t) { addUrls(t); setDraft(""); } }}
+                      placeholder="Paste URL and press Enter…"
+                      style={{ ...S.input, paddingLeft:32 }}
+                    />
+                  </div>
+                  <Btn
+                    variant={draft.trim() ? "primary" : "ghost"}
+                    onClick={() => { if(draft.trim()){ addUrls(draft.trim()); setDraft(""); } }}
+                    disabled={!draft.trim()}
+                  >Add</Btn>
+                </div>
+
+                <div style={S.linksArea}>
+                  {items.length === 0 ? (
+                    <div style={S.linksEmpty}>
+                      <div style={{ width:40, height:40, borderRadius:12, background:"#0f171b", border:"1px solid var(--border)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
+                        <IconFilm size={20}/>
+                      </div>
+                      <div>No links yet</div>
+                      <div style={{ fontSize:11.5 }}>YouTube, Vimeo, Twitter, and 1000+ sites via yt-dlp.</div>
+                    </div>
+                  ) : items.map(it => <LinkRow key={it.id} item={it} onRemove={removeItem} onRedownload={redownload}/>)}
+                </div>
+
+                {items.length > 0 && (
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:10, fontSize:11.5, color:"var(--text-3)" }}>
+                    <span>{items.length} link{items.length !== 1 ? "s" : ""} · {doneCount} done</span>
+                    {totalBytes > 0 && <span style={{ fontFamily:"var(--mono)" }}>{fmtBytes(totalBytes)} downloaded</span>}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ── Search tab ── */}
+            {activeTab === "search" && (
+              <div style={{ display:"flex", flexDirection:"column", gap:10, flex:1, overflow:"hidden" }}>
+                {/* Search bar */}
+                <div style={{ display:"flex", gap:8 }}>
+                  <div style={{ flex:1, position:"relative" }}>
+                    <IconSearch size={13} style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:"var(--text-3)", pointerEvents:"none" }}/>
+                    <input
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      onKeyDown={onSearchKey}
+                      placeholder="Search YouTube…"
+                      style={{ ...S.input, paddingLeft:32 }}
+                    />
+                  </div>
+                  <Btn
+                    variant={searchQuery.trim() && !searching ? "primary" : "ghost"}
+                    onClick={runSearch}
+                    disabled={searching || !searchQuery.trim()}
+                  >{searching ? "…" : "Search"}</Btn>
+                </div>
+
+                {/* Selected result card */}
+                {selectedResult && (
+                  <div style={S.searchCard}>
+                    <img
+                      src={selectedResult.thumbnail}
+                      alt=""
+                      style={S.searchThumb}
+                      onError={e => { e.target.style.opacity = 0; }}
+                    />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:13, fontWeight:600, color:"var(--text)", lineHeight:1.4, marginBottom:4, wordBreak:"break-word" }}>{selectedResult.title}</div>
+                      {selectedResult.uploader && <div style={{ fontSize:11.5, color:"var(--text-3)", marginBottom:6 }}>{selectedResult.uploader}</div>}
+                      {selectedResult.duration && <div style={{ fontSize:11, color:"var(--text-3)", fontFamily:"var(--mono)", marginBottom:8 }}>{fmtDuration(selectedResult.duration)}</div>}
+                      <Btn variant="primary" onClick={() => addSearchResult(selectedResult)}>+ Add to queue</Btn>
+                    </div>
+                  </div>
+                )}
+
+                {/* Results list — backend-paginated, 10 per fetch, unlimited depth */}
+                <div style={{ ...S.linksArea, minHeight:160 }}>
+                  {searching ? (
+                    <div style={S.linksEmpty}>
+                      <div style={{ color:"var(--text-3)", fontSize:13 }}>Searching…</div>
+                    </div>
+                  ) : searchResults.length === 0 ? (
+                    <div style={S.linksEmpty}>
+                      <div style={{ width:40, height:40, borderRadius:12, background:"#0f171b", border:"1px solid var(--border)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
+                        <IconSearch size={20}/>
+                      </div>
+                      {lastSearch
+                        ? <div>No more results for "{lastSearch}"</div>
+                        : <><div>Search YouTube to find videos</div><div style={{ fontSize:11.5 }}>Results are added to the download queue.</div></>
+                      }
+                    </div>
+                  ) : searchResults.map(r => (
+                    <div key={r.id} style={S.searchResultRow(selectedResult?.id === r.id)} onClick={() => setSelectedResult(r)}>
+                      <img src={r.thumbnail} alt="" style={S.searchThumbSm} onError={e => { e.target.style.opacity = 0; }}/>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:12.5, color:"var(--text)", lineHeight:1.4, overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis" }}>{r.title}</div>
+                        <div style={{ display:"flex", gap:8, marginTop:2 }}>
+                          {r.uploader && <span style={{ fontSize:11, color:"var(--text-3)" }}>{r.uploader}</span>}
+                          {r.duration  && <span style={{ fontSize:11, color:"var(--text-3)", fontFamily:"var(--mono)" }}>{fmtDuration(r.duration)}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {(searchStart > 1 || hasMoreResults) && (
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, paddingTop:4 }}>
+                    <button
+                      onClick={() => goToPage(searchStart - 12)}
+                      disabled={searchStart <= 1 || searching}
+                      style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--text-2)", borderRadius:6, padding:"4px 10px", fontSize:13, cursor: searchStart <= 1 || searching ? "not-allowed" : "pointer", opacity: searchStart <= 1 || searching ? 0.4 : 1, transition:"all 120ms" }}
+                    >‹</button>
+                    <button
+                      onClick={() => goToPage(searchStart + 12)}
+                      disabled={!hasMoreResults || searching}
+                      style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--text-2)", borderRadius:6, padding:"4px 10px", fontSize:13, cursor: !hasMoreResults || searching ? "not-allowed" : "pointer", opacity: !hasMoreResults || searching ? 0.4 : 1, transition:"all 120ms" }}
+                    >›</button>
+                  </div>
+                )}
               </div>
             )}
           </Panel>
 
-          {/* Log */}
-          <Panel
-            title="Log"
-            icon={<IconTerminal size={13}/>}
-            style={{ flex: 1, display:"flex", flexDirection:"column", overflow:"hidden" }}
-            right={
-              <button onClick={() => setLog([])} style={{ background:"transparent", border:"none", color:"var(--text-3)", fontSize:11, cursor:"pointer", padding:4 }}>
-                clear
-              </button>
-            }
-          >
-            <div style={S.log} ref={logRef}>
-              {log.length === 0
-                ? <div style={{ color:"var(--text-3)" }}>— waiting for startup —</div>
-                : log.map((l, i) => (
-                  <div key={i} style={S.logLine}>
-                    <span style={S.logTime}>{l.t}</span>
-                    <span style={S.logTag(l.tone)}>[{l.tag}]</span>
-                    <span style={{ flex:1, wordBreak:"break-all" }}>{l.msg}</span>
-                  </div>
-                ))
-              }
+          {/* Log — collapsible */}
+          <section style={{ ...S.panel, ...(logCollapsed ? {} : { flex: 1, display:"flex", flexDirection:"column", overflow:"hidden" }) }}>
+            <div
+              style={{ ...S.panelHead, cursor:"pointer", userSelect:"none" }}
+              onClick={() => setLogCollapsed(c => !c)}
+            >
+              <div style={S.panelTitle}>
+                <IconTerminal size={13}/>Log
+                <IconChevronD up={!logCollapsed} size={12} style={{ marginLeft:2, color:"var(--text-3)" }}/>
+              </div>
+              <div onClick={e => e.stopPropagation()}>
+                <button onClick={() => setLog([])} style={{ background:"transparent", border:"none", color:"var(--text-3)", fontSize:11, cursor:"pointer", padding:4 }}>
+                  clear
+                </button>
+              </div>
             </div>
-          </Panel>
+            {!logCollapsed && (
+              <div style={S.log} ref={logRef}>
+                {log.length === 0
+                  ? <div style={{ color:"var(--text-3)" }}>— waiting for startup —</div>
+                  : log.map((l, i) => (
+                    <div key={i} style={S.logLine}>
+                      <span style={S.logTime}>{l.t}</span>
+                      <span style={S.logTag(l.tone)}>[{l.tag}]</span>
+                      <span style={{ flex:1, wordBreak:"break-all" }}>{l.msg}</span>
+                    </div>
+                  ))
+                }
+              </div>
+            )}
+          </section>
         </div>
 
         {/* ══ RIGHT COLUMN ══ */}
         <div style={S.sideCol}>
 
           {/* Destination */}
-          <Panel title="Destination" icon={<IconFolder size={13}/>}>
+          <Panel title="Destination" icon={<IconFolder size={13}/>} style={{ flex: 1 }}>
             <label style={S.fieldLabel}>Save to</label>
             <div style={S.pathRow}>
               <input value={savePath} onChange={e => setSavePath(e.target.value)} style={S.input}/>

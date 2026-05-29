@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('coveAPI', {
     cancel: ()       => ipcRenderer.invoke('cove:download:cancel'),
   },
 
+  search: {
+    run: (query, start) => ipcRenderer.invoke('cove:search:run', query, start),
+  },
+
   win: {
     close:           () => ipcRenderer.invoke('cove:window:close'),
     minimize:        () => ipcRenderer.invoke('cove:window:minimize'),

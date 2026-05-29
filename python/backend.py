@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -35,7 +36,7 @@ if _HERE not in sys.path:
 
 from ssl_context import get_ssl_context
 
-__version__ = "2.1.1"
+__version__ = "2.2.0"
 
 
 # ── stdout/stderr helpers ──────────────────────────────────────────────────
@@ -637,6 +638,66 @@ def _run_download(params):
             _busy = False
 
 
+# ── YouTube search ─────────────────────────────────────────────────────────
+_SEARCH_PAGE_SIZE = 12
+
+def _run_search(params):
+    query = (params.get("query") or "").strip()
+    start = max(1, int(params.get("start") or 1))
+    if not query:
+        emit({"type": "search_results", "query": query, "start": start,
+              "has_more": False, "results": []})
+        return
+    try:
+        ytdlp = get_tool("yt-dlp")
+        url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}"
+        # Fetch one extra to reliably detect whether there are more results,
+        # and to absorb any off-by-one from yt-dlp's playlist-end handling.
+        end = start + _SEARCH_PAGE_SIZE
+        proc = subprocess.run(
+            [ytdlp, url, "--flat-playlist", "--dump-json", "--no-warnings",
+             "--playlist-start", str(start), "--playlist-end", str(end)],
+            capture_output=True, text=True,
+            creationflags=(subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0),
+            timeout=60,
+        )
+        if proc.returncode != 0:
+            err_msg = (proc.stderr or "").strip().splitlines()
+            err_short = err_msg[-1] if err_msg else "unknown error"
+            log("search", f"yt-dlp search failed (exit {proc.returncode}): {err_short}", "err")
+            emit({"type": "search_results", "query": query, "start": start,
+                  "has_more": False, "results": []})
+            return
+        results = []
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+            vid_id = item.get("id", "")
+            if not vid_id:
+                continue
+            results.append({
+                "id": vid_id,
+                "title": item.get("title", ""),
+                "uploader": item.get("uploader") or item.get("channel") or "",
+                "duration": item.get("duration"),
+                "thumbnail": f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg",
+                "webpageUrl": f"https://www.youtube.com/watch?v={vid_id}",
+            })
+        has_more = len(results) > _SEARCH_PAGE_SIZE
+        results = results[:_SEARCH_PAGE_SIZE]
+        emit({"type": "search_results", "query": query, "start": start,
+              "has_more": has_more, "results": results})
+    except Exception as e:
+        log("search", f"Search error: {e}", "err")
+        emit({"type": "search_results", "query": query, "start": start,
+              "has_more": False, "results": []})
+
+
 # ── command dispatcher (stdin reader loop) ────────────────────────────────
 def handle_command(cmd_obj):
     global _busy
@@ -654,6 +715,10 @@ def handle_command(cmd_obj):
 
     elif cmd == "cancel_download":
         _cancel.set()
+
+    elif cmd == "search":
+        threading.Thread(target=_run_search, args=(cmd_obj.get("params") or {},),
+                         daemon=True).start()
 
     elif cmd == "version":
         emit({"type": "version", "version": __version__})
