@@ -211,7 +211,7 @@ const S = {
     fontSize: 12, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--text-3)",
   },
   linksArea: {
-    minHeight: 160, flex: 1,
+    minHeight: 120, maxHeight: 300,
     background: "#0a1013", border: "1px solid var(--border)",
     borderRadius: 10, padding: 6, display: "flex", flexDirection: "column",
     overflowY: "auto", overflowX: "hidden",
@@ -731,7 +731,6 @@ function CoveDownloader() {
   const onSearchKey = (e) => { if (e.key === "Enter") runSearch(); };
   const addSearchResult = (result) => {
     addUrls(result.webpageUrl);
-    setActiveTab("links");
   };
 
   // ── Folder ────────────────────────────────────────────────────────────
@@ -816,7 +815,7 @@ function CoveDownloader() {
         {/* ══ LEFT COLUMN ══ */}
         <div style={S.mainCol}>
           {/* Video Links / Search — tabbed panel */}
-          <Panel style={{ flex: 1, flexShrink: 1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+          <Panel>
             {/* Tab bar */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, borderBottom:"1px solid var(--border)", paddingBottom:0 }}>
               <div style={{ display:"flex", gap:0 }}>
@@ -881,7 +880,7 @@ function CoveDownloader() {
 
             {/* ── Search tab ── */}
             {activeTab === "search" && (
-              <div style={{ display:"flex", flexDirection:"column", gap:10, flex:1, overflow:"hidden" }}>
+              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
                 {/* Search bar */}
                 <div style={{ display:"flex", gap:8 }}>
                   <div style={{ flex:1, position:"relative" }}>
@@ -951,12 +950,12 @@ function CoveDownloader() {
                 {(searchStart > 1 || hasMoreResults) && (
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, paddingTop:4 }}>
                     <button
-                      onClick={() => goToPage(searchStart - 12)}
+                      onClick={() => goToPage(searchStart - 8)}
                       disabled={searchStart <= 1 || searching}
                       style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--text-2)", borderRadius:6, padding:"4px 10px", fontSize:13, cursor: searchStart <= 1 || searching ? "not-allowed" : "pointer", opacity: searchStart <= 1 || searching ? 0.4 : 1, transition:"all 120ms" }}
                     >‹</button>
                     <button
-                      onClick={() => goToPage(searchStart + 12)}
+                      onClick={() => goToPage(searchStart + 8)}
                       disabled={!hasMoreResults || searching}
                       style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--text-2)", borderRadius:6, padding:"4px 10px", fontSize:13, cursor: !hasMoreResults || searching ? "not-allowed" : "pointer", opacity: !hasMoreResults || searching ? 0.4 : 1, transition:"all 120ms" }}
                     >›</button>
@@ -967,7 +966,7 @@ function CoveDownloader() {
           </Panel>
 
           {/* Log — collapsible */}
-          <section style={{ ...S.panel, ...(logCollapsed ? {} : { flex: 1, display:"flex", flexDirection:"column", overflow:"hidden" }) }}>
+          <section style={{ ...S.panel, ...(logCollapsed ? {} : { height: 180, display:"flex", flexDirection:"column", overflow:"hidden" }) }}>
             <div
               style={{ ...S.panelHead, cursor:"pointer", userSelect:"none" }}
               onClick={() => setLogCollapsed(c => !c)}
@@ -1175,9 +1174,6 @@ function CoveDownloader() {
               </Btn>
             </div>
           </Panel>
-
-          {/* Elastic spacer — pushes Tooling to the bottom of the right column */}
-          <div style={{ flex: 1 }}/>
 
           {/* Tooling */}
           <Panel title="Tooling" icon={<IconZap size={13}/>}>
