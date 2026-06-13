@@ -3,10 +3,12 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const readline = require('node:readline');
+const { setupPortableMode } = require('./portable');
 
 const APP_ID = 'cove-video-downloader';
 app.setName('Cove Video Downloader');
-app.setPath('userData', path.join(app.getPath('appData'), APP_ID));
+const _isPortable = setupPortableMode();
+if (!_isPortable) app.setPath('userData', path.join(app.getPath('appData'), APP_ID));
 
 let mainWindow = null;
 let pyProc = null;        // Python backend child process
