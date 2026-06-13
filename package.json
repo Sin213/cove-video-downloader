@@ -29,6 +29,7 @@
     },
     "files": [
       "main.js",
+      "portable.js",
       "preload.js",
       "renderer/**/*",
       "python/**/*",
