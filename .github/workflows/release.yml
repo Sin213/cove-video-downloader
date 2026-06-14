@@ -101,11 +101,10 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create GitHub Release
+      - name: Attach artifacts to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/linux-builds/*
             artifacts/windows-builds/*
           fail_on_unmatched_files: true
-          generate_release_notes: true
