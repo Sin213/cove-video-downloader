@@ -12,7 +12,7 @@ if (!_isPortable) app.setPath('userData', path.join(app.getPath('appData'), APP_
 
 let mainWindow = null;
 let pyProc = null;        // Python backend child process
-let pyReady = false;      // flips true on first "ready" event
+let pyReady = false;      // flips true when tools_ready fires
 // The backend emits the first few events (ready / tools_ready) within a few
 // hundred ms of spawn, which is often before the renderer has mounted React
 // and subscribed to cove:event. Events arriving before subscription are
@@ -69,11 +69,11 @@ function spawnBackend() {
         ...process.env,
         PYTHONIOENCODING: 'utf-8',
         PYTHONUNBUFFERED:  '1',
-        // Used by backend.py as yt-dlp's JavaScript runtime for YouTube's
-        // signature / n-challenge solving. ELECTRON_RUN_AS_NODE=1 makes the
-        // Electron binary behave as plain Node, saving us from bundling a
-        // separate ~120 MB Deno.
         COVE_NODE_BIN: process.execPath,
+        ...(_isPortable ? { COVE_PORTABLE_DATA: path.join(
+          process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe')),
+          'cove-app-data'
+        ) } : {}),
       },
     });
   } catch (err) {
@@ -85,7 +85,7 @@ function spawnBackend() {
   rl.on('line', (line) => {
     let event;
     try { event = JSON.parse(line); } catch { return; }
-    if (event.type === 'ready') pyReady = true;
+    if (event.type === 'tools_ready') pyReady = true;
     deliverEvent(event);
   });
 
@@ -179,6 +179,24 @@ app.on('before-quit', () => {
   }
 });
 
+// ───────────────────────────── Settings persistence ──────────────────────
+
+const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+
+function loadSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function saveSettings(settings) {
+  try {
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  } catch {}
+}
+
 // ───────────────────────────── IPC handlers ───────────────────────────────
 
 // Window controls
@@ -228,12 +246,15 @@ ipcMain.handle('cove:download:start',  (_, params) => sendCommand({ cmd: 'start_
 ipcMain.handle('cove:download:cancel', ()          => sendCommand({ cmd: 'cancel_download'         }));
 ipcMain.handle('cove:search:run',      (_, query, start) => sendCommand({ cmd: 'search', params: { query, start } }));
 
-// Initial state: default save path + app version + pending ready flag
+// Initial state: default save path + app version + saved settings
 ipcMain.handle('cove:init', () => ({
-  version:   app.getVersion(),
-  savePath:  app.getPath('downloads'),
+  version:      app.getVersion(),
+  savePath:     app.getPath('downloads'),
   backendReady: pyReady,
+  settings:     loadSettings(),
 }));
+
+ipcMain.handle('cove:settings:save', (_, settings) => saveSettings(settings));
 
 // Renderer calls this AFTER it has subscribed to cove:event via onEvent,
 // so we flush any events the backend emitted during the React mount delay.

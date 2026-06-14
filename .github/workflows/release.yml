@@ -44,20 +44,7 @@ jobs:
             [ -f "$f" ] && sha256sum "$f" > "$f.sha256"
           done
 
-      - name: Attach Linux artifacts to GitHub Release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release/*.AppImage
-            release/*.AppImage.sha256
-            release/*.deb
-            release/*.deb.sha256
-          fail_on_unmatched_files: true
-          generate_release_notes: true
-
-      - name: Upload Linux artifacts as workflow artifact
-        if: github.ref_type != 'tag'
+      - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
           name: linux-builds
@@ -93,20 +80,7 @@ jobs:
             [ -f "$f" ] && sha256sum "$f" > "$f.sha256"
           done
 
-      - name: Attach Windows artifacts to GitHub Release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release/*-Setup.exe
-            release/*-Setup.exe.sha256
-            release/*-Portable.exe
-            release/*-Portable.exe.sha256
-          fail_on_unmatched_files: true
-          generate_release_notes: true
-
-      - name: Upload Windows artifacts as workflow artifact
-        if: github.ref_type != 'tag'
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-builds
@@ -116,3 +90,22 @@ jobs:
             release/*-Portable.exe
             release/*-Portable.exe.sha256
           if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/linux-builds/*
+            artifacts/windows-builds/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true

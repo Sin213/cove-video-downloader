@@ -5,16 +5,18 @@ Reads commands (one JSON object per line) on stdin, writes events (one JSON
 object per line) on stdout. The Electron main process spawns this script
 and wires stdout lines to IPC events delivered to the renderer.
 
-Commands (Electron → Python, one JSON per stdin line):
+Commands (Electron -> Python, one JSON per stdin line):
     {"cmd": "start_download", "params": {...}}
     {"cmd": "cancel_download"}
+    {"cmd": "search", "params": {"query": "...", "start": N}}
 
-Events (Python → Electron, one JSON per stdout line):
-    {"type": "ready"}
+Events (Python -> Electron, one JSON per stdout line):
+    {"type": "ready", "version": "..."}
     {"type": "log", "tag": "...", "tone": "ok|err|warn|dim", "msg": "..."}
     {"type": "item_state", "id": "...", "state": "...", "pct": 0-100, ...}
     {"type": "tools_ready", "ytdlp_tag": "...", "ffmpeg_ver": "...", "hb_ver": "..."}
     {"type": "download_complete", "success": N, "fail": N}
+    {"type": "search_results", "query": "...", "start": N, "has_more": bool, "results": [...]}
 """
 import glob
 import json
@@ -36,7 +38,7 @@ if _HERE not in sys.path:
 
 from ssl_context import get_ssl_context
 
-__version__ = "2.3.0"
+__version__ = "2.4.0"
 
 
 # ── stdout/stderr helpers ──────────────────────────────────────────────────
@@ -54,7 +56,10 @@ def log(tag, msg, tone="dim"):
 
 # ── tool directory / resolution ────────────────────────────────────────────
 def tools_dir():
-    if sys.platform == "win32":
+    portable = os.environ.get("COVE_PORTABLE_DATA")
+    if portable:
+        base = Path(portable) / "tools"
+    elif sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home())) / "CoveVideoDownloader"
     else:
         base = Path.home() / ".cove-video-downloader"
@@ -353,6 +358,8 @@ def _run_download(params):
         # format in Python.
         sub_fmt_ytdlp = "srt"
 
+        proxy_url = (params.get("proxy") or "").strip()
+
         # Cookies source: "auto" (detect), browser name ("firefox"/"chrome"/...),
         # "none" (skip), or an absolute path to a Netscape cookies.txt file.
         cookies_mode = (params.get("cookies") or "auto").strip()
@@ -475,6 +482,8 @@ def _run_download(params):
                     cmd.extend(["--cookies", cookies_file])
                 elif cookies_browser:
                     cmd.extend(["--cookies-from-browser", cookies_browser])
+                if proxy_url:
+                    cmd.extend(["--proxy", proxy_url])
                 cmd.append(url)
 
                 emit({"type": "item_state", "id": item_id,
@@ -640,36 +649,54 @@ def _run_download(params):
 
 # ── YouTube search ─────────────────────────────────────────────────────────
 _SEARCH_PAGE_SIZE = 10
+_search_lock = threading.Lock()
+_search_proc = None
 
 def _run_search(params):
+    global _search_proc
     query = (params.get("query") or "").strip()
-    start = max(1, int(params.get("start") or 1))
+    try:
+        start = max(1, int(params.get("start") or 1))
+    except (ValueError, TypeError):
+        start = 1
     if not query:
         emit({"type": "search_results", "query": query, "start": start,
               "has_more": False, "results": []})
         return
     try:
+        with _search_lock:
+            if _search_proc and _search_proc.poll() is None:
+                try:
+                    _search_proc.terminate()
+                except Exception:
+                    pass
         ytdlp = get_tool("yt-dlp")
         url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}"
         # Fetch one extra to reliably detect whether there are more results,
         # and to absorb any off-by-one from yt-dlp's playlist-end handling.
         end = start + _SEARCH_PAGE_SIZE
-        proc = subprocess.run(
+        p = subprocess.Popen(
             [ytdlp, url, "--flat-playlist", "--dump-json", "--no-warnings",
              "--playlist-start", str(start), "--playlist-end", str(end)],
-            capture_output=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL, text=True,
             creationflags=(subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0),
-            timeout=60,
         )
-        if proc.returncode != 0:
-            err_msg = (proc.stderr or "").strip().splitlines()
+        with _search_lock:
+            _search_proc = p
+        stdout, stderr = p.communicate(timeout=60)
+        with _search_lock:
+            if _search_proc is p:
+                _search_proc = None
+        if p.returncode != 0:
+            err_msg = (stderr or "").strip().splitlines()
             err_short = err_msg[-1] if err_msg else "unknown error"
-            log("search", f"yt-dlp search failed (exit {proc.returncode}): {err_short}", "err")
+            log("search", f"yt-dlp search failed (exit {p.returncode}): {err_short}", "err")
             emit({"type": "search_results", "query": query, "start": start,
                   "has_more": False, "results": []})
             return
         results = []
-        for line in proc.stdout.splitlines():
+        for line in stdout.splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -719,9 +746,6 @@ def handle_command(cmd_obj):
     elif cmd == "search":
         threading.Thread(target=_run_search, args=(cmd_obj.get("params") or {},),
                          daemon=True).start()
-
-    elif cmd == "version":
-        emit({"type": "version", "version": __version__})
 
 
 def main():

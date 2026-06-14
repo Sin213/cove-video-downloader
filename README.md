@@ -11,16 +11,39 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-informational?style=flat-square)
-![Version](https://img.shields.io/badge/version-2.2.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.4.0-blue?style=flat-square)
 
 Cove Video Downloader is a thin, opinionated front-end over
 [`yt-dlp`](https://github.com/yt-dlp/yt-dlp). It picks the best quality
-automatically, merges video and audio into a single MP4, and optionally
-re-encodes to H.265 to reclaim disk space. No format pickers, no resolution
-menus, no settings you don't need.
+automatically, merges video and audio into a single file, and optionally
+re-encodes to H.265 to reclaim disk space. Format pickers, codec selection,
+proxy support, and Smart Mode settings persistence are all built in.
 
 Part of the [Cove](https://github.com/Sin213?tab=repositories&q=cove) suite
 of small desktop tools.
+
+---
+
+## What's new in v2.4.0
+
+**Smart Mode, proxy support, and queue persistence.**
+
+- **Smart Mode** - quality, format, codec, cookies, compress, proxy, and
+  save path all persist across app restarts. No more re-picking your
+  settings every launch.
+- **Queue persistence** - the download queue survives app restarts.
+  In-progress items reset to queued so you can pick up where you left off.
+- **Proxy support** - new proxy field in the sidebar accepts HTTP, HTTPS,
+  and SOCKS5 URLs. Passed directly to yt-dlp's `--proxy` flag for
+  bypassing geo-restrictions or ISP blocks.
+- **Search improvements** - page number indicator between navigation
+  arrows, "Searching..." label instead of ambiguous dots, and
+  keyboard-accessible result rows (Tab + Enter/Space to select).
+- **Bug fixes** - the UI now waits for tools to finish loading before
+  accepting downloads (previously could fail silently). Search cancels the
+  previous query before starting a new one instead of stacking unbounded
+  processes. Portable mode now keeps yt-dlp and tools inside the portable
+  data folder. CI release workflow consolidated to prevent race conditions.
 
 ---
 
@@ -127,14 +150,28 @@ with thumbnails, channel names, and durations. Select a video and click
 login, no cookies required.
 
 ### Best quality, automatically
-No format pickers. Cove always grabs the best video + audio available (4K,
-1440p, 1080p, whatever the site offers) and merges them into a single MP4.
-You can cap the quality to 480p / 720p / 1080p / Audio if you want
-something smaller.
+Cove grabs the best video + audio available (4K, 1440p, 1080p, whatever the
+site offers) and merges them into your chosen container. Pick a resolution
+cap, output format (MP4, WebM, MKV, MOV, AVI), and codec preference
+(H.264, H.265, VP9, AV1) from the sidebar.
 
 ### Audio-only downloads
-Switch **Quality** to **Audio** and pick MP3 or OGG to rip just the audio
-track.
+Switch **Quality** to **Audio** and pick from MP3, Opus, M4A, OGG, FLAC,
+or WAV.
+
+### Subtitle downloads
+Switch **Quality** to **Subs** to grab subtitles only. Choose SRT or VTT
+format and pick from eight languages. Auto-captions are deduplicated
+automatically.
+
+### Smart Mode
+All your settings - quality, format, codec, cookies, compress, proxy, and
+save folder - persist between sessions. Launch the app and your last
+configuration is already loaded.
+
+### Proxy support
+Enter an HTTP, HTTPS, or SOCKS5 proxy URL in the sidebar to bypass
+geographic restrictions or ISP blocks.
 
 ### Optional H.265 compression
 The **Compress** checkbox hands the downloaded MP4 to HandBrakeCLI for
@@ -152,8 +189,8 @@ The **Paste** button and **Ctrl+V** both auto-split on whitespace so a
 whole block of links from your clipboard lands as separate queue items.
 
 ### Custom save folder
-Click **Browse** to pick any folder. The choice persists across launches.
-**Open Folder** jumps your file manager straight there.
+Click **Browse** to pick any folder. The choice persists across launches
+via Smart Mode. **Open Folder** jumps your file manager straight there.
 
 ### Auto-detecting browser cookies
 For age-restricted or login-gated videos, Cove will hand your browser
@@ -179,8 +216,9 @@ every launch.
 1. Launch the app.
 2. Copy a video link, then paste it in (**Ctrl+V** or the **Paste**
    button). Repeat for as many links as you want.
-3. *(Optional)* Change **Quality**, flip **Compress**, pick a **Save To**
-   folder.
+3. *(Optional)* Change **Quality**, pick a **Format** / **Codec**, set a
+   **Proxy**, flip **Compress**, or pick a **Save To** folder. All settings
+   are remembered for next time.
 4. Click **⬇ Download**.
 5. Click **📂 Open Folder** to reveal your files.
 

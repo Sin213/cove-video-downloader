@@ -546,12 +546,13 @@ function CoveDownloader() {
   const [compress,    setCompress]    = React.useState(false);
   const [running,     setRunning]     = React.useState(false);
   const [draft,       setDraft]       = React.useState("");
-  const [version,     setVersion]     = React.useState("v2.3.0");
+  const [version,     setVersion]     = React.useState("v2.4.0");
   const [videoCodec,  setVideoCodec]  = React.useState("auto");
   // Cookies source: "auto"/"firefox"/"chrome"/"brave"/"chromium"/"edge"/"none"
   // or an absolute path to a Netscape cookies.txt file.
   const [cookiesMode, setCookiesMode] = React.useState("auto");
   const [cookiesFile, setCookiesFile] = React.useState("");
+  const [proxyUrl,    setProxyUrl]    = React.useState("");
   const [activeTab,      setActiveTab]      = React.useState("links");
   const [logCollapsed,   setLogCollapsed]   = React.useState(true);
   const [searchQuery,    setSearchQuery]    = React.useState("");
@@ -590,8 +591,27 @@ function CoveDownloader() {
       if (!API()) return;
       try {
         const state = await API().init();
-        if (state?.savePath) setSavePath(state.savePath);
-        if (state?.version)  setVersion(`v${state.version}`);
+        if (state?.version) setVersion(`v${state.version}`);
+        const s = state?.settings || {};
+        setSavePath(s.savePath || state?.savePath || "");
+        if (s.quality)     setQuality(s.quality);
+        if (s.videoFormat) setVideoFormat(s.videoFormat);
+        if (s.videoCodec)  setVideoCodec(s.videoCodec);
+        if (s.audioFormat) setAudioFormat(s.audioFormat);
+        if (s.subFormat)   setSubFormat(s.subFormat);
+        if (s.subLang)     setSubLang(s.subLang);
+        if (s.cookiesMode) setCookiesMode(s.cookiesMode);
+        if (s.cookiesFile) setCookiesFile(s.cookiesFile);
+        if (s.proxyUrl)    setProxyUrl(s.proxyUrl);
+        if (typeof s.compress === "boolean") setCompress(s.compress);
+        if (Array.isArray(s.queue) && s.queue.length) {
+          setItems(s.queue.map(it => ({
+            ...it,
+            state: (it.state === "downloading" || it.state === "fetching" || it.state === "encoding")
+              ? "idle" : it.state,
+            pct: 0, speed: "",
+          })));
+        }
       } catch {}
       unsub = API().onEvent((event) => {
         switch (event.type) {
@@ -641,6 +661,20 @@ function CoveDownloader() {
     boot();
     return () => { if (unsub) unsub(); };
   }, [updateItem, pushLog]);
+
+  // ── Settings persistence (Smart Mode) ──────────────────────────────────
+  const saveTimer = React.useRef(null);
+  React.useEffect(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      if (!API()?.settings?.save) return;
+      API().settings.save({
+        savePath, quality, videoFormat, videoCodec, audioFormat,
+        subFormat, subLang, cookiesMode, cookiesFile, compress, proxyUrl,
+        queue: items.map(it => ({ id: it.id, url: it.url, state: it.state, size: it.size || 0 })),
+      });
+    }, 500);
+  }, [savePath, quality, videoFormat, videoCodec, audioFormat, subFormat, subLang, cookiesMode, cookiesFile, compress, proxyUrl, items]);
 
   // ── Link management ───────────────────────────────────────────────────
   const addUrls = (text) => {
@@ -789,6 +823,7 @@ function CoveDownloader() {
         subFormat,
         subLang,
         cookies: cookiesMode === "file" ? (cookiesFile || "none") : cookiesMode,
+        proxy: proxyUrl,
       });
       // running=false is set by the download_complete event from Python
     } catch (e) {
@@ -895,7 +930,7 @@ function CoveDownloader() {
                     variant={searchQuery.trim() && !searching ? "primary" : "ghost"}
                     onClick={runSearch}
                     disabled={searching || !searchQuery.trim()}
-                  >{searching ? "…" : "Search"}</Btn>
+                  >{searching ? "Searching..." : "Search"}</Btn>
                 </div>
 
                 {/* Selected result card */}
@@ -936,7 +971,14 @@ function CoveDownloader() {
                       }
                     </div>
                   ) : searchResults.map(r => (
-                    <div key={r.id} style={S.searchResultRow(selectedResult?.id === r.id)} onClick={() => setSelectedResult(r)}>
+                    <div
+                      key={r.id}
+                      role="button"
+                      tabIndex={0}
+                      style={S.searchResultRow(selectedResult?.id === r.id)}
+                      onClick={() => setSelectedResult(r)}
+                      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedResult(r); } }}
+                    >
                       <img src={r.thumbnail} alt="" style={S.searchThumbSm} onError={e => { e.target.style.opacity = 0; }}/>
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ fontSize:12.5, color:"var(--text)", lineHeight:1.4, overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis" }}>{r.title}</div>
@@ -955,6 +997,9 @@ function CoveDownloader() {
                       disabled={searchStart <= 1 || searching}
                       style={{ background:"transparent", border:"1px solid var(--border)", color:"var(--text-2)", borderRadius:6, padding:"4px 10px", fontSize:13, cursor: searchStart <= 1 || searching ? "not-allowed" : "pointer", opacity: searchStart <= 1 || searching ? 0.4 : 1, transition:"all 120ms" }}
                     >‹</button>
+                    <span style={{ fontSize:11.5, color:"var(--text-3)", fontFamily:"var(--mono)", minWidth:40, textAlign:"center" }}>
+                      {Math.ceil(searchStart / 10)}
+                    </span>
                     <button
                       onClick={() => goToPage(searchStart + 10)}
                       disabled={!hasMoreResults || searching}
@@ -1128,6 +1173,17 @@ function CoveDownloader() {
                 {cookiesFile}
               </div>
             )}
+
+            <div style={{ height:14 }}/>
+
+            <label style={S.fieldLabel}>Proxy</label>
+            <input
+              value={proxyUrl}
+              onChange={e => setProxyUrl(e.target.value)}
+              placeholder="socks5://127.0.0.1:1080"
+              style={S.input}
+              aria-label="Proxy URL"
+            />
 
             <div style={{ height:14 }}/>
 
