@@ -4,35 +4,45 @@
   <meta charset="utf-8" />
   <title>Cove Video Downloader</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="fonts/fonts.css">
   <style>
     :root {
-      --bg: #0b1013;
-      --bg-2: #0e1518;
-      --panel: #121a1f;
-      --panel-2: #151d23;
-      --panel-hi: #192328;
-      --border: #1e2a31;
-      --border-hi: #27353d;
-      --text: #e6edf0;
-      --text-2: #a2b0b8;
-      --text-3: #6a7880;
-      --accent: #5eead4;
-      --accent-2: #2dd4bf;
-      --accent-ink: #052e2b;
-      --danger: #f87171;
-      --ok: #4ade80;
-      --warn: #fbbf24;
-      --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-      --sans: "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      --bg: #0b0b10;
+      --bg-2: #0d0d14;
+      --panel: #13131b;
+      --panel-2: #181822;
+      --panel-hi: #1f1f2b;
+      --field: #0a0a0f;
+      --border: rgba(255,255,255,0.06);
+      --border-hi: rgba(255,255,255,0.10);
+      --text: #ececf1;
+      --text-2: #9a9aae;
+      --text-3: #6b6b80;
+      --accent: #50e6cf;
+      --accent-2: #6ff0dc;
+      --accent-press: #3ccab4;
+      --accent-soft: rgba(80,230,207,0.14);
+      --accent-ring: rgba(80,230,207,0.35);
+      --accent-ink: #07120f;
+      --violet: #7c5cff;
+      --violet-soft: rgba(124,92,255,0.14);
+      --violet-ring: rgba(124,92,255,0.35);
+      --danger: #ff6b6b;
+      --ok: #3ddc97;
+      --warn: #ffb454;
+      --mono: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --sans: "Geist", "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0; padding: 0; height: 100%;
       background:
-        radial-gradient(1200px 600px at 20% -10%, rgba(94,234,212,0.06), transparent 60%),
-        radial-gradient(900px 500px at 110% 10%, rgba(45,212,191,0.04), transparent 60%),
-        var(--bg);
+        radial-gradient(1100px 560px at 88% -12%, rgba(80,230,207,0.08), transparent 60%),
+        radial-gradient(900px 520px at -8% 108%, rgba(124,92,255,0.07), transparent 60%),
+        linear-gradient(180deg, var(--bg-2), #0a0a0f);
       color: var(--text);
       font-family: var(--sans);
       font-size: 14px;
@@ -44,8 +54,8 @@
     #root { height: 100%; display: flex; align-items: stretch; }
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #1f2a30; border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
-    ::-webkit-scrollbar-thumb:hover { background: #2a3a42; background-clip: padding-box; border: 2px solid transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); background-clip: padding-box; border: 2px solid transparent; }
     .focusable:focus-visible,
     input:focus-visible, button:focus-visible, select:focus-visible, textarea:focus-visible {
       outline: 2px solid var(--accent);
@@ -54,7 +64,7 @@
     input, button, select, textarea { font-family: inherit; user-select: text; }
     input, textarea { user-select: text; }
     /* Electron frameless drag region: Chromium handles move/double-click-to-max
-       natively from these CSS rules — no JS required. */
+       natively from these CSS rules - no JS required. */
     .drag-region { -webkit-app-region: drag; app-region: drag; }
     .no-drag     { -webkit-app-region: no-drag; app-region: no-drag; }
   </style>
@@ -98,44 +108,46 @@ const IconDot = ({ size = 8, color = "currentColor" }) => (
 
 // ─── Window Chrome ────────────────────────────────────────────────────────
 // Electron (frame: false) + CSS -webkit-app-region gives us native drag,
-// double-click-to-maximize, edge resize — all for free. Just need to mark
+// double-click-to-maximize, edge resize - all for free. Just need to mark
 // the titlebar as draggable and the buttons as no-drag.
 
 const chromeStyles = {
   shell: {
     width: "100%", height: "100%",
-    background: "var(--bg-2)",
+    background: "transparent",
     display: "flex", flexDirection: "column",
     overflow: "hidden",
   },
   titleBar: {
-    height: 44, flexShrink: 0,
+    height: 46, flexShrink: 0,
     display: "grid",
     gridTemplateColumns: "1fr auto 1fr",
     alignItems: "center",
-    padding: "0 10px 0 14px",
-    background: "linear-gradient(#131c21, #0f161a)",
+    padding: "0 12px 0 14px",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.025), transparent)",
     borderBottom: "1px solid var(--border)",
+    backdropFilter: "blur(12px)",
   },
   brand: { display: "flex", alignItems: "center", gap: 10, color: "var(--text-2)" },
   brandBadge: {
-    width: 26, height: 26, borderRadius: 8,
-    background: "#0b1114", border: "1px solid var(--border-hi)",
+    width: 28, height: 28, borderRadius: 9,
+    background: "linear-gradient(160deg, #16161f 0%, #0d0d14 100%)",
+    border: "1px solid var(--border-hi)",
     display: "flex", alignItems: "center", justifyContent: "center",
-    color: "var(--accent)",
+    boxShadow: "0 6px 16px -6px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05)",
   },
   titleText: {
-    fontSize: 13, fontWeight: 600, color: "var(--text)",
-    letterSpacing: 0.1, textAlign: "center",
-    display: "flex", alignItems: "center", gap: 8, justifyContent: "center",
+    fontSize: 13, fontWeight: 500, color: "var(--text)",
+    letterSpacing: "-0.005em", textAlign: "center", whiteSpace: "nowrap",
+    display: "flex", alignItems: "center", gap: 9, justifyContent: "center",
   },
   version: {
-    fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-3)",
-    padding: "2px 7px", borderRadius: 6, background: "#0b1114", border: "1px solid var(--border)",
+    fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--accent)", letterSpacing: "0.02em",
+    padding: "2px 8px", borderRadius: 999, background: "var(--accent-soft)", border: "1px solid var(--accent-ring)",
   },
   controls: { justifySelf: "end", display: "flex", alignItems: "center", gap: 2 },
   ctrlBtn: {
-    width: 32, height: 28, borderRadius: 6,
+    width: 30, height: 28, borderRadius: 7,
     display: "flex", alignItems: "center", justifyContent: "center",
     color: "var(--text-2)", background: "transparent",
     border: "none", cursor: "pointer",
@@ -144,7 +156,7 @@ const chromeStyles = {
   },
 };
 
-function WindowChrome({ title, version, children, onMin, onMax, onClose }) {
+function WindowChrome({ title, version, children, footer, onMin, onMax, onClose }) {
   const [hover, setHover] = React.useState(null);
   const ctrlBtn = (key, hoverBg, hoverColor, icon, action) => (
     <button
@@ -164,7 +176,7 @@ function WindowChrome({ title, version, children, onMin, onMax, onClose }) {
       <div style={chromeStyles.titleBar} className="drag-region">
         <div style={chromeStyles.brand}>
           <div style={chromeStyles.brandBadge} className="no-drag">
-            <img src="assets/cove_icon.png" style={{ width:18, height:18, objectFit:"contain", display:"block" }} alt=""/>
+            <img src="assets/cove_icon.png" style={{ width:20, height:20, objectFit:"contain", display:"block", filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.6))" }} alt=""/>
           </div>
         </div>
         <div style={chromeStyles.titleText}>
@@ -172,14 +184,15 @@ function WindowChrome({ title, version, children, onMin, onMax, onClose }) {
           <span style={chromeStyles.version}>{version}</span>
         </div>
         <div style={chromeStyles.controls}>
-          {ctrlBtn("min",   "#1a2328", "var(--text)", <IconMinus size={14}/>, onMin)}
-          {ctrlBtn("max",   "#1a2328", "var(--text)", <div style={{width:10,height:10,border:"1.5px solid currentColor",borderRadius:2}}/>, onMax)}
-          {ctrlBtn("close", "#e11d48", "#fff",         <IconX size={14}/>, onClose)}
+          {ctrlBtn("min",   "rgba(255,255,255,0.06)", "var(--text)", <IconMinus size={14}/>, onMin)}
+          {ctrlBtn("max",   "rgba(255,255,255,0.06)", "var(--text)", <div style={{width:10,height:10,border:"1.5px solid currentColor",borderRadius:2}}/>, onMax)}
+          {ctrlBtn("close", "#e5484d", "#fff",         <IconX size={14}/>, onClose)}
         </div>
       </div>
-      <div style={{ flex: 1, overflow: "hidden", background: "var(--bg-2)" }}>
+      <div style={{ flex: 1, overflow: "hidden", background: "transparent" }}>
         {children}
       </div>
+      {footer}
     </div>
   );
 }
@@ -188,29 +201,31 @@ function WindowChrome({ title, version, children, onMin, onMax, onClose }) {
 // ─── Downloader styles ────────────────────────────────────────────────────
 const S = {
   body: {
-    padding: 20,
-    height: "calc(100vh - 44px)",
+    padding: 18,
+    height: "calc(100vh - 46px - 28px)",
     overflow: "hidden",
     display: "flex",
     gap: 16,
     boxSizing: "border-box",
   },
   mainCol: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0, flex: 1, overflow: "hidden" },
-  sideCol: { display: "flex", flexDirection: "column", gap: 14, flexShrink: 0, width: 340, overflowY: "auto", overflowX: "hidden" },
+  sideCol: { display: "flex", flexDirection: "column", gap: 14, flexShrink: 0, width: 344, overflowY: "auto", overflowX: "hidden" },
   sub:     { margin: 0, fontSize: 13, color: "var(--text-3)" },
   panel: {
-    background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 12, padding: 14, flexShrink: 0,
+    background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 14, padding: 14, flexShrink: 0,
+    boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset, 0 20px 40px -32px rgba(0,0,0,0.6)",
   },
   panelHead: {
     display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 12,
   },
   panelTitle: {
     display: "flex", alignItems: "center", gap: 8,
-    fontSize: 12, fontWeight: 600, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--text-3)",
+    fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--text-3)",
+    fontFamily: "var(--mono)",
   },
   linksArea: {
     minHeight: 0, flex: 1,
-    background: "#0a1013", border: "1px solid var(--border)",
+    background: "var(--field)", border: "1px solid var(--border)",
     borderRadius: 10, padding: 6, display: "flex", flexDirection: "column",
     overflowY: "auto", overflowX: "hidden",
   },
@@ -224,52 +239,53 @@ const S = {
   },
   linkUrl: { flex: 1, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   linkMeta: { color: "var(--text-3)", fontSize: 11 },
-  progBar: { height: 4, background: "#0b1114", borderRadius: 2, overflow: "hidden", flexBasis: 120, minWidth: 80, flexShrink: 0 },
-  progFill: (pct, color) => ({ height: "100%", width: `${pct}%`, background: color, transition: "width 200ms linear", borderRadius: 2 }),
+  progBar: { height: 5, background: "rgba(255,255,255,0.08)", borderRadius: 3, overflow: "hidden", flexBasis: 120, minWidth: 80, flexShrink: 0 },
+  progFill: (pct, color) => ({ height: "100%", width: `${pct}%`, background: color, transition: "width 200ms linear", borderRadius: 3, boxShadow: `0 0 8px ${color}` }),
   btn: {
     display: "inline-flex", alignItems: "center", gap: 7,
     padding: "8px 12px", fontSize: 12.5, fontWeight: 500,
     borderRadius: 8, border: "1px solid var(--border-hi)",
-    background: "#141d22", color: "var(--text)", cursor: "pointer",
+    background: "var(--panel-hi)", color: "var(--text)", cursor: "pointer",
     transition: "all 120ms", whiteSpace: "nowrap",
   },
   btnGhost:   { background: "transparent", border: "1px solid var(--border)", color: "var(--text-2)" },
   btnPrimary: {
-    background: "var(--accent)", color: "var(--accent-ink)", border: "1px solid transparent",
-    fontWeight: 600, boxShadow: "0 1px 0 rgba(255,255,255,0.08) inset, 0 8px 20px rgba(94,234,212,0.18)",
+    background: "var(--accent)", color: "var(--accent-ink)", border: "1px solid var(--accent)",
+    fontWeight: 600, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18), 0 8px 24px -10px var(--accent-ring)",
   },
-  btnDanger:  { background: "transparent", border: "1px solid #3b1f23", color: "#fca5a5" },
+  btnDanger:  { background: "transparent", border: "1px solid rgba(255,107,107,0.25)", color: "#ff9b9b" },
   fieldLabel: {
-    display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-3)",
-    letterSpacing: 0.6, textTransform: "uppercase", marginBottom: 6,
+    display: "block", fontSize: 10.5, fontWeight: 500, color: "var(--text-3)",
+    letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 6, fontFamily: "var(--mono)",
   },
   input: {
     width: "100%", padding: "9px 12px", fontSize: 13, fontFamily: "var(--mono)",
-    color: "var(--text)", background: "#0a1013", border: "1px solid var(--border)",
-    borderRadius: 8, outline: "none", transition: "border-color 120ms",
+    color: "var(--text)", background: "var(--field)", border: "1px solid var(--border)",
+    borderRadius: 8, outline: "none", transition: "border-color 120ms, box-shadow 120ms",
   },
   pathRow: { display: "flex", gap: 8 },
-  seg: { display: "flex", width: "100%", background: "#0a1013", border: "1px solid var(--border)", borderRadius: 8, padding: 3, gap: 2 },
+  seg: { display: "flex", width: "100%", background: "var(--field)", border: "1px solid var(--border)", borderRadius: 8, padding: 3, gap: 2 },
   segBtn: (on) => ({
     flex: "1 1 0", minWidth: 0, textAlign: "center",
     padding: "6px 4px", fontSize: 11.5, fontWeight: 500, borderRadius: 6, border: "none", cursor: "pointer",
-    background: on ? "#1c272d" : "transparent", color: on ? "var(--text)" : "var(--text-3)", transition: "all 120ms",
+    background: on ? "var(--accent-soft)" : "transparent", color: on ? "var(--accent)" : "var(--text-3)",
+    boxShadow: on ? "inset 0 0 0 1px var(--accent-ring)" : "none", transition: "all 120ms",
   }),
   toggleRow: {
     display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
-    background: "#0a1013", border: "1px solid var(--border)", borderRadius: 8,
+    background: "var(--field)", border: "1px solid var(--border)", borderRadius: 8,
     cursor: "pointer", userSelect: "none",
   },
   toggle: (on) => ({
-    width: 32, height: 18, borderRadius: 999, background: on ? "var(--accent)" : "#253137",
+    width: 32, height: 18, borderRadius: 999, background: on ? "var(--accent)" : "rgba(255,255,255,0.10)",
     position: "relative", transition: "background 120ms", flexShrink: 0,
   }),
   toggleDot: (on) => ({
     position: "absolute", top: 2, left: on ? 16 : 2, width: 14, height: 14, borderRadius: "50%",
-    background: on ? "var(--accent-ink)" : "#a2b0b8", transition: "left 160ms cubic-bezier(.5,.8,.4,1)",
+    background: on ? "var(--accent-ink)" : "#9a9aae", transition: "left 160ms cubic-bezier(.5,.8,.4,1)",
   }),
   log: {
-    background: "#070b0d", border: "1px solid var(--border)", borderRadius: 10, padding: 12,
+    background: "#08080c", border: "1px solid var(--border)", borderRadius: 10, padding: 12,
     fontFamily: "var(--mono)", fontSize: 12, lineHeight: 1.6, color: "var(--text-2)",
     flex: 1, overflow: "auto", minHeight: 160,
     userSelect: "text", WebkitUserSelect: "text", cursor: "text",
@@ -285,7 +301,7 @@ const S = {
   }),
   toolRow: {
     display: "flex", alignItems: "center", justifyContent: "space-between",
-    padding: "9px 12px", background: "#0a1013", border: "1px solid var(--border)", borderRadius: 8,
+    padding: "9px 12px", background: "var(--field)", border: "1px solid var(--border)", borderRadius: 8,
   },
   toolName: { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text)" },
   toolVer:  { fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-3)" },
@@ -295,9 +311,10 @@ const S = {
   dropdownBtn: (open) => ({
     width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
     gap: 6, padding: "7px 10px", fontSize: 12.5, fontWeight: 500, fontFamily: "var(--mono)",
-    color: "var(--text)", background: "#0a1013",
-    border: `1px solid ${open ? "var(--accent)" : "var(--border)"}`,
-    borderRadius: 8, cursor: "pointer", transition: "border-color 120ms", outline: "none",
+    color: "var(--text)", background: "var(--field)",
+    border: `1px solid ${open ? "var(--accent-ring)" : "var(--border)"}`,
+    borderRadius: 8, cursor: "pointer", transition: "border-color 120ms, box-shadow 120ms", outline: "none",
+    boxShadow: open ? "0 0 0 3px var(--accent-soft)" : "none",
   }),
   dropdownChev: (open) => ({
     transition: "transform 160ms", transform: open ? "rotate(180deg)" : "rotate(0deg)",
@@ -305,40 +322,43 @@ const S = {
   }),
   dropdownMenu: {
     position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 20,
-    background: "#121a1f", border: "1px solid var(--border-hi)", borderRadius: 8,
+    background: "var(--panel-2)", border: "1px solid var(--border-hi)", borderRadius: 8,
     padding: 4, display: "flex", flexDirection: "column", gap: 1,
-    boxShadow: "0 12px 28px rgba(0,0,0,0.45)", maxHeight: 260, overflowY: "auto",
+    boxShadow: "0 16px 36px rgba(0,0,0,0.55)", maxHeight: 260, overflowY: "auto",
   },
   dropdownOpt: (on) => ({
     textAlign: "left", padding: "7px 10px", fontSize: 12.5, fontFamily: "var(--mono)",
     fontWeight: 500, borderRadius: 6, border: "none", cursor: "pointer",
-    background: on ? "#1c272d" : "transparent",
-    color: on ? "var(--text)" : "var(--text-2)",
+    background: on ? "var(--accent-soft)" : "transparent",
+    color: on ? "var(--accent)" : "var(--text-2)",
     transition: "background 80ms",
   }),
   formatRow: { marginTop: 10, display: "flex", alignItems: "center", gap: 10 },
   formatLabel: {
-    fontSize: 11.5, color: "var(--text-3)", textTransform: "uppercase",
-    letterSpacing: 0.6, fontWeight: 600, width: 64, flexShrink: 0,
+    fontSize: 10.5, color: "var(--text-3)", textTransform: "uppercase",
+    letterSpacing: "0.12em", fontWeight: 500, width: 64, flexShrink: 0, fontFamily: "var(--mono)",
   },
   tabBtn: (on) => ({
     display: "inline-flex", alignItems: "center", gap: 6,
-    padding: "5px 12px", fontSize: 12, fontWeight: on ? 600 : 500,
+    padding: "5px 12px 8px", fontSize: 12.5, fontWeight: on ? 600 : 500,
     background: "transparent", border: "none",
     borderBottom: on ? "2px solid var(--accent)" : "2px solid transparent",
-    cursor: "pointer", color: on ? "var(--accent)" : "var(--text-3)",
-    borderRadius: 0, transition: "color 120ms, border-color 120ms", flexShrink: 0,
+    cursor: "pointer", color: on ? "var(--text)" : "var(--text-3)",
+    borderRadius: 0, transition: "color 120ms, border-color 120ms", flexShrink: 0, whiteSpace: "nowrap",
+    textShadow: on ? "0 0 18px var(--accent-ring)" : "none",
   }),
   searchCard: {
-    background: "#0a1013", border: "1px solid var(--accent)", borderRadius: 10,
+    background: "var(--field)", border: "1px solid var(--accent-ring)", borderRadius: 10,
     padding: 12, display: "flex", gap: 12, alignItems: "flex-start",
+    boxShadow: "0 0 0 3px var(--accent-soft)",
   },
-  searchThumb: { width: 120, height: 68, borderRadius: 6, objectFit: "cover", flexShrink: 0, background: "#151d23" },
+  searchThumb: { width: 120, height: 68, borderRadius: 6, objectFit: "cover", flexShrink: 0, background: "var(--panel-2)" },
   searchResultRow: (on) => ({
     display: "flex", gap: 10, padding: "5px 10px", borderRadius: 8, cursor: "pointer",
-    background: on ? "#1c272d" : "transparent", transition: "background 100ms", alignItems: "center",
+    background: on ? "var(--accent-soft)" : "transparent", transition: "background 100ms", alignItems: "center",
+    boxShadow: on ? "inset 0 0 0 1px var(--accent-ring)" : "none",
   }),
-  searchThumbSm: { width: 72, height: 40, borderRadius: 5, objectFit: "cover", flexShrink: 0, background: "#151d23" },
+  searchThumbSm: { width: 72, height: 40, borderRadius: 5, objectFit: "cover", flexShrink: 0, background: "var(--panel-2)" },
 };
 
 const now = () => {
@@ -377,8 +397,8 @@ function Btn({ children, variant = "default", icon, onClick, disabled, style }) 
   const [hover, setHover] = React.useState(false);
   const hoverStyle = !disabled && hover ? (
     variant === "primary" ? { background: "var(--accent-2)", transform: "translateY(-1px)" } :
-    variant === "danger"  ? { background: "#2a1418", color: "#fecaca" } :
-                            { background: "#1a2328", borderColor: "#30414a" }
+    variant === "danger"  ? { background: "rgba(255,107,107,0.12)", color: "#ffc4c4", borderColor: "rgba(255,107,107,0.4)" } :
+                            { background: "var(--panel-hi)", color: "var(--accent)", borderColor: "var(--accent-ring)" }
   ) : {};
   return (
     <button
@@ -461,7 +481,7 @@ function Dropdown({ value, options, onChange }) {
               aria-selected={o.v === value}
               style={S.dropdownOpt(o.v === value)}
               onClick={() => { onChange(o.v); setOpen(false); }}
-              onMouseEnter={(e) => { if (o.v !== value) e.currentTarget.style.background = "#16212a"; }}
+              onMouseEnter={(e) => { if (o.v !== value) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
               onMouseLeave={(e) => { if (o.v !== value) e.currentTarget.style.background = "transparent"; }}
             >
               {o.label}
@@ -490,7 +510,7 @@ function LinkRow({ item, onRemove, onRedownload }) {
     state === "error"        ? (item.err || "error") : "";
   return (
     <div
-      style={{ ...S.linkRow, background: hover ? "#0f171b" : "transparent" }}
+      style={{ ...S.linkRow, background: hover ? "rgba(255,255,255,0.035)" : "transparent" }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
@@ -546,7 +566,7 @@ function CoveDownloader() {
   const [compress,    setCompress]    = React.useState(false);
   const [running,     setRunning]     = React.useState(false);
   const [draft,       setDraft]       = React.useState("");
-  const [version,     setVersion]     = React.useState("v2.4.0");
+  const [version,     setVersion]     = React.useState("v3.0.0");
   const [videoCodec,  setVideoCodec]  = React.useState("auto");
   // Cookies source: "auto"/"firefox"/"chrome"/"brave"/"chromium"/"edge"/"none"
   // or an absolute path to a Netscape cookies.txt file.
@@ -588,7 +608,40 @@ function CoveDownloader() {
   React.useEffect(() => {
     let unsub = null;
     const boot = async () => {
-      if (!API()) return;
+      if (!API()) {
+        // ── Preview / demo mode (no Electron backend present) ──
+        setVersion("v3.0.0");
+        setSavePath("/home/sin/Downloads");
+        setItems([
+          { id: uid(), url: "https://www.youtube.com/watch?v=bd-MRcTbx7k", state: "done", pct: 100, speed: "", size: 48_300_000 },
+          { id: uid(), url: "https://x.com/acdmma_/status/2040645529525186626", state: "downloading", pct: 62, speed: "4.8 MB/s", size: 0 },
+          { id: uid(), url: "https://www.tiktok.com/@powderblue2930/video/7623361261085969677", state: "encoding", pct: 34, speed: "", size: 0 },
+          { id: uid(), url: "https://www.reddit.com/r/StupidFood/comments/1stswqe/i_dont_think_thats_flash_paper/", state: "idle", pct: 0, speed: "", size: 0 },
+          { id: uid(), url: "https://www.instagram.com/reels/DW1XQ42Draf/", state: "idle", pct: 0, speed: "", size: 0 },
+        ]);
+        setTools([
+          { name: "yt-dlp",    v: "2026.03.17", ok: true },
+          { name: "ffmpeg",    v: "8.1.1",      ok: true },
+          { name: "HandBrake", v: "-",          ok: true },
+        ]);
+        setLog([
+          { t: "15:52:54", tag: "tools",  tone: "dim",  msg: "yt-dlp → /home/sin/.cove-video-downloader/yt-dlp" },
+          { t: "15:52:54", tag: "tools",  tone: "dim",  msg: "ffmpeg → resources/runtime/ffmpeg" },
+          { t: "15:52:54", tag: "yt-dlp", tone: "ok",   msg: "2026.03.17 already up to date." },
+          { t: "15:52:54", tag: "ready",  tone: "ok",   msg: "Ready. Paste links above to begin." },
+        ]);
+        lastSearchRef.current = "Cannons";
+        setLastSearch("Cannons");
+        setSearchResults([
+          { id: "d1", title: "Cannons - Bright Lights (Official Audio)",        uploader: "Cannons", duration: 207, thumbnail: "https://picsum.photos/seed/cove1/120/68", webpageUrl: "https://youtu.be/d1" },
+          { id: "d2", title: "Cannons - All I Need (Official Visualizer)",       uploader: "Cannons", duration: 238, thumbnail: "https://picsum.photos/seed/cove2/120/68", webpageUrl: "https://youtu.be/d2" },
+          { id: "d3", title: "Cannons - These Nights (Official Visualizer)",     uploader: "Cannons", duration: 280, thumbnail: "https://picsum.photos/seed/cove3/120/68", webpageUrl: "https://youtu.be/d3" },
+          { id: "d4", title: "Cannons - Ruthless (Living Room Sessions)",        uploader: "Cannons", duration: 207, thumbnail: "https://picsum.photos/seed/cove4/120/68", webpageUrl: "https://youtu.be/d4" },
+          { id: "d5", title: "Cannons - Light as a Feather (Official Visualizer)", uploader: "Cannons", duration: 219, thumbnail: "https://picsum.photos/seed/cove5/120/68", webpageUrl: "https://youtu.be/d5" },
+          { id: "d6", title: "Cannons - Love on the Ground (Official Audio)",    uploader: "Cannons", duration: 224, thumbnail: "https://picsum.photos/seed/cove6/120/68", webpageUrl: "https://youtu.be/d6" },
+        ]);
+        return;
+      }
       try {
         const state = await API().init();
         if (state?.version) setVersion(`v${state.version}`);
@@ -640,9 +693,9 @@ function CoveDownloader() {
             break;
           case "tools_ready":
             setTools([
-              { name: "yt-dlp",    v: event.ytdlp_tag  || "—", ok: true },
-              { name: "ffmpeg",    v: event.ffmpeg_ver || "—", ok: true },
-              { name: "HandBrake", v: event.hb_ver     || "—", ok: true },
+              { name: "yt-dlp",    v: event.ytdlp_tag  || "-", ok: true },
+              { name: "ffmpeg",    v: event.ffmpeg_ver || "-", ok: true },
+              { name: "HandBrake", v: event.hb_ver     || "-", ok: true },
             ]);
             break;
           case "search_results":
@@ -698,7 +751,7 @@ function CoveDownloader() {
 
   const onClear = () => {
     if (!items.length) return;
-    // If a run is in-flight, cancel the backend too — otherwise it'd keep
+    // If a run is in-flight, cancel the backend too - otherwise it'd keep
     // grinding on URLs we no longer show.
     if (running && API()?.download?.cancel) {
       try { API().download.cancel(); } catch {}
@@ -711,7 +764,7 @@ function CoveDownloader() {
   const stopDownload = () => {
     if (!API()?.download?.cancel) return;
     try { API().download.cancel(); } catch {}
-    pushLog({ tag: "dl", tone: "warn", msg: "Stop requested — finishing current item, skipping the rest." });
+    pushLog({ tag: "dl", tone: "warn", msg: "Stop requested - finishing current item, skipping the rest." });
   };
 
   const removeItem = (id) => setItems(prev => prev.filter(i => i.id !== id));
@@ -735,7 +788,7 @@ function CoveDownloader() {
     try {
       const ok = await API().search.run(q, start);
       if (!ok) {
-        pushLog({ tag: "search", tone: "err", msg: "Search failed — backend unavailable." });
+        pushLog({ tag: "search", tone: "err", msg: "Search failed - backend unavailable." });
         setSearching(false);
       }
     } catch (e) {
@@ -843,11 +896,31 @@ function CoveDownloader() {
       onMin={   () => API()?.win.minimize()       }
       onMax={   () => API()?.win.maximizeToggle() }
       onClose={ () => API()?.win.close()          }
+      footer={
+        <div style={{
+          height: 28, flexShrink: 0, borderTop: "1px solid var(--border)",
+          background: "linear-gradient(180deg, transparent, rgba(255,255,255,0.012))",
+          display: "flex", alignItems: "center", gap: 14, padding: "0 16px",
+          fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-3)",
+        }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 7, color: "var(--text-2)" }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent)", boxShadow: "0 0 8px var(--accent-ring)" }}/>
+            {running || items.some(i => i.state === "downloading" || i.state === "encoding" || i.state === "fetching") ? "Working" : "Ready"}
+          </span>
+          <span style={{ opacity: 0.5 }}>·</span>
+          <span>{doneCount} / {items.length} complete</span>
+          {totalBytes > 0 && <><span style={{ opacity: 0.5 }}>·</span><span>{fmtBytes(totalBytes)}</span></>}
+          <span style={{ flex: 1 }}/>
+          <span style={{ color: "var(--text-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 280 }}>{savePath}</span>
+          <span style={{ opacity: 0.5 }}>·</span>
+          <span style={{ color: "var(--accent)" }}>yt-dlp {tools[0]?.v}</span>
+        </div>
+      }
     >
       <div style={S.body}>
         {/* ══ LEFT COLUMN ══ */}
         <div style={S.mainCol}>
-          {/* Video Links / Search — tabbed panel */}
+          {/* Video Links / Search - tabbed panel */}
           <Panel style={{ flex: 1, flexShrink: 1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
             {/* Tab bar */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10, borderBottom:"1px solid var(--border)", paddingBottom:0 }}>
@@ -893,7 +966,7 @@ function CoveDownloader() {
                 <div style={S.linksArea}>
                   {items.length === 0 ? (
                     <div style={S.linksEmpty}>
-                      <div style={{ width:40, height:40, borderRadius:12, background:"#0f171b", border:"1px solid var(--border)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
+                      <div style={{ width:40, height:40, borderRadius:12, background:"linear-gradient(160deg,#1a1a24,#0f0f17)", border:"1px solid var(--border-hi)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
                         <IconFilm size={20}/>
                       </div>
                       <div>No links yet</div>
@@ -954,7 +1027,7 @@ function CoveDownloader() {
                   </div>
                 )}
 
-                {/* Results list — backend-paginated, 10 per fetch, unlimited depth */}
+                {/* Results list - backend-paginated, 10 per fetch, unlimited depth */}
                 <div style={{ ...S.linksArea }}>
                   {searching ? (
                     <div style={S.linksEmpty}>
@@ -962,7 +1035,7 @@ function CoveDownloader() {
                     </div>
                   ) : searchResults.length === 0 ? (
                     <div style={S.linksEmpty}>
-                      <div style={{ width:40, height:40, borderRadius:12, background:"#0f171b", border:"1px solid var(--border)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
+                      <div style={{ width:40, height:40, borderRadius:12, background:"linear-gradient(160deg,#1a1a24,#0f0f17)", border:"1px solid var(--border-hi)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
                         <IconSearch size={20}/>
                       </div>
                       {lastSearch
@@ -1011,12 +1084,12 @@ function CoveDownloader() {
             )}
           </Panel>
 
-          {/* Log — collapsible, opens upward */}
+          {/* Log - collapsible, opens upward */}
           <section style={{ ...S.panel, ...(logCollapsed ? {} : { height: 180, display:"flex", flexDirection:"column", overflow:"hidden" }) }}>
             {!logCollapsed && (
               <div style={{ ...S.log, flex: 1, marginBottom: 10, minHeight: 0 }} ref={logRef}>
                 {log.length === 0
-                  ? <div style={{ color:"var(--text-3)" }}>— waiting for startup —</div>
+                  ? <div style={{ color:"var(--text-3)" }}>- waiting for startup -</div>
                   : log.map((l, i) => (
                     <div key={i} style={S.logLine}>
                       <span style={S.logTime}>{l.t}</span>
@@ -1206,7 +1279,7 @@ function CoveDownloader() {
                   variant="danger"
                   icon={<IconStop size={14}/>}
                   onClick={stopDownload}
-                  style={{ justifyContent:"center", padding:"11px 14px", fontSize:13.5, borderColor:"#5b2027", color:"#fecaca" }}
+                  style={{ justifyContent:"center", padding:"11px 14px", fontSize:13.5, borderColor:"rgba(255,107,107,0.4)", color:"#ffc4c4" }}
                 >
                   Stop all
                 </Btn>

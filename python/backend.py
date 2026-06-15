@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cove Video Downloader — JSON-lines backend.
+"""Cove Video Downloader - JSON-lines backend.
 
 Reads commands (one JSON object per line) on stdin, writes events (one JSON
 object per line) on stdout. The Electron main process spawns this script
@@ -72,7 +72,7 @@ def resource_path(relative):
     """Look for bundled resources (ffmpeg, HandBrakeCLI) adjacent to this
     script. In the packaged Electron app backend.py lives at
     resources/app.asar.unpacked/python/, while the runtime ships to
-    resources/runtime/ — two levels up, not one."""
+    resources/runtime/ - two levels up, not one."""
     for cand in (
         os.path.join(_HERE, relative),
         os.path.join(_HERE, "..", relative),
@@ -93,7 +93,7 @@ def get_tool(name):
     managed = TOOLS_DIR / (name + ext)
     if managed.exists():
         return str(managed)
-    # 3. Resolve from PATH — returns an absolute path when found, or the
+    # 3. Resolve from PATH - returns an absolute path when found, or the
     #    bare name as a last-resort fallback so log messages stay readable.
     found = shutil.which(name + ext)
     if found:
@@ -109,9 +109,9 @@ def get_tool_version(cmd):
         )
         first_line = (result.stdout or result.stderr or "").split("\n")[0]
         m = re.search(r"(\d+\.\d+(?:\.\d+)?)", first_line)
-        return m.group(1) if m else "—"
+        return m.group(1) if m else "-"
     except Exception:
-        return "—"
+        return "-"
 
 
 # ── yt-dlp updater ─────────────────────────────────────────────────────────
@@ -224,7 +224,7 @@ def _postprocess_subs(srt_path, final_fmt):
 # approach hit YouTube and mis-reported unusable-but-installed browsers), and
 # it sidesteps Windows Chrome 127+ app-bound encryption giving fast non-zero
 # exits that our phrase matcher couldn't recognize. Firefox is checked first
-# because its cookies are plain SQLite — no keyring/DPAPI decryption — so it's
+# because its cookies are plain SQLite - no keyring/DPAPI decryption - so it's
 # the most likely to actually work when handed to yt-dlp.
 BROWSERS = ["firefox", "chrome", "brave", "chromium", "edge"]
 
@@ -273,7 +273,7 @@ def detect_browser_cookies(ytdlp_bin):
                 if hits:
                     log("cookies", f"Auto-detected: {browser}", "ok")
                     return browser
-        log("cookies", "No browser cookies found — proceeding without.", "dim")
+        log("cookies", "No browser cookies found - proceeding without.", "dim")
         return None
     except Exception as e:
         log("cookies", f"Detection skipped: {e}", "warn")
@@ -289,14 +289,14 @@ def _run_ytdlp_check():
     """Probe tools + auto-update yt-dlp.
 
     Emits tools_ready as soon as we have local versions probed, so the UI
-    lights up immediately — even if the GitHub update check is slow or
+    lights up immediately - even if the GitHub update check is slow or
     fails. Re-emits after a successful yt-dlp update to refresh the version
     string.
     """
     def _snapshot_and_emit():
         ffmpeg_ver = get_tool_version([get_tool("ffmpeg"), "-version"])
         hb_ver     = get_tool_version([get_tool("HandBrakeCLI"), "--version"])
-        ytdlp_tag  = _ytdlp_current_tag() or "—"
+        ytdlp_tag  = _ytdlp_current_tag() or "-"
         emit({
             "type": "tools_ready",
             "ytdlp_tag":  ytdlp_tag,
@@ -333,7 +333,7 @@ def _run_ytdlp_check():
             log("yt-dlp", "Using existing version.", "warn")
             log("ready", "Ready (update check failed).", "ok")
         else:
-            log("yt-dlp", "yt-dlp not found — check internet.", "err")
+            log("yt-dlp", "yt-dlp not found - check internet.", "err")
 
 def _run_download(params):
     global _busy
@@ -345,7 +345,7 @@ def _run_download(params):
         video_fmt    = (params.get("videoFormat") or "mp4").lower()
         # Codec preference: yt-dlp's `-S vcodec:<codec>` sorts the chosen
         # codec first but falls back to the next-best if it's unavailable
-        # at the requested resolution — this keeps Auto behavior intact and
+        # at the requested resolution - this keeps Auto behavior intact and
         # gives users a soft preference rather than a hard filter.
         video_codec  = (params.get("videoCodec") or "auto").lower()
         audio_req    = (params.get("audioFormat") or "mp3").lower()
@@ -413,7 +413,7 @@ def _run_download(params):
             cookies_file = cookies_mode
             log("cookies", f"Using cookies file: {cookies_mode}", "ok")
         else:
-            log("cookies", f"Unknown cookies source '{cookies_mode}' — proceeding without.", "warn")
+            log("cookies", f"Unknown cookies source '{cookies_mode}' - proceeding without.", "warn")
 
         success = fail = 0
 
@@ -532,7 +532,7 @@ def _run_download(params):
                         low = s.lower()
                         # Explicit cookie-decrypt failures (Chrome 127+
                         # app-bound encryption on Windows is the common one)
-                        # surface here too — treating them as cookie errors
+                        # surface here too - treating them as cookie errors
                         # lets the UI suggest the right fix (pick Firefox or
                         # a cookies.txt file).
                         if ("login" in low or "sign in" in low or "403" in s
@@ -547,7 +547,7 @@ def _run_download(params):
                 proc.wait()
                 if proc.returncode != 0:
                     fail += 1
-                    err_msg = ("Cookies issue — try picking Firefox or a cookies.txt file in Destination → Cookies."
+                    err_msg = ("Cookies issue - try picking Firefox or a cookies.txt file in Destination → Cookies."
                                if cookie_error else "Download failed.")
                     emit({"type": "item_state", "id": item_id,
                           "state": "error", "err": err_msg})
@@ -580,7 +580,7 @@ def _run_download(params):
                 if do_compress and downloaded_file and os.path.exists(downloaded_file):
                     if not os.path.isfile(hbcli_bin):
                         log("HandBrake",
-                            "HandBrakeCLI not found — install via your package "
+                            "HandBrakeCLI not found - install via your package "
                             "manager (e.g. `sudo apt install handbrake-cli`) and "
                             "retry with compress enabled.", "err")
                     else:
@@ -621,7 +621,7 @@ def _run_download(params):
                                 else:
                                     os.remove(tmp_file)
                                     log("HandBrake",
-                                        "Original already optimal — kept as-is.", "dim")
+                                        "Original already optimal - kept as-is.", "dim")
                             else:
                                 log("HandBrake",
                                     "Compression failed. Original kept.", "err")
@@ -640,7 +640,7 @@ def _run_download(params):
                       "state": "error", "err": str(e)})
                 fail += 1
 
-        log("dl", f"Queue complete — {success} succeeded, {fail} failed.", "ok")
+        log("dl", f"Queue complete - {success} succeeded, {fail} failed.", "ok")
         emit({"type": "download_complete", "success": success, "fail": fail})
     finally:
         with _busy_lock:

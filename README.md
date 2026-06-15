@@ -11,7 +11,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-informational?style=flat-square)
-![Version](https://img.shields.io/badge/version-2.4.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-3.0.0-blue?style=flat-square)
 
 Cove Video Downloader is a thin, opinionated front-end over
 [`yt-dlp`](https://github.com/yt-dlp/yt-dlp). It picks the best quality
@@ -21,6 +21,36 @@ proxy support, and Smart Mode settings persistence are all built in.
 
 Part of the [Cove](https://github.com/Sin213?tab=repositories&q=cove) suite
 of small desktop tools.
+
+---
+
+## What's new in v3.0.0
+
+**Full visual redesign in the Cove design language.**
+
+The entire UI has been rebuilt to match the look and feel shared across the
+Cove suite (Image Lab, Suite dashboard). Same Electron + React architecture,
+same backend logic, completely new surface.
+
+- **New palette** - neutral purple-black surfaces with mint (`#50e6cf`)
+  primary accent and violet (`#7c5cff`) secondary glow. Replaces the
+  previous teal-on-dark-green theme.
+- **Geist typography** - Geist and Geist Mono from Google Fonts as the
+  primary typeface, with Inter and JetBrains Mono as offline fallback.
+- **Dual radial glow background** - subtle mint glow top-right and violet
+  glow bottom-left behind the main surface.
+- **Redesigned title bar** - gradient brand badge with inset highlight and
+  drop shadow, accent-soft version pill with ring border, backdrop blur.
+- **Status bar** - new footer bar showing ready/working status, completion
+  count, total bytes downloaded, save path, and yt-dlp version at a glance.
+- **Glow buttons** - primary action buttons get a soft glow shadow and
+  subtle lift on hover.
+- **Accent-soft controls** - segmented quality selector, tab underlines,
+  and search result highlights all use the new accent-soft/ring token system.
+- **Refined panels** - larger border radius, inset highlight box shadows,
+  and hairline white borders throughout.
+- **Preview/demo mode** - when no Electron backend is present, the UI
+  auto-populates with realistic sample data for design previewing.
 
 ---
 
@@ -50,7 +80,7 @@ of small desktop tools.
 ## What's new in v2.2.0
 
 **Search YouTube without leaving the app.** A new **Search** tab sits next
-to Video Links — type a query, browse paginated results with thumbnails and
+to Video Links. Type a query, browse paginated results with thumbnails and
 durations, select a video, and add it straight to the download queue. No API
 keys, no accounts, no cookies. Powered entirely by `yt-dlp`'s public search.
 
@@ -58,17 +88,17 @@ keys, no accounts, no cookies. Powered entirely by `yt-dlp`'s public search.
   <img src="docs/screenshot-search.png" alt="YouTube search inside Cove" />
 </p>
 
-- **Built-in YouTube search** — type a query, see results with thumbnails,
+- **Built-in YouTube search** - type a query, see results with thumbnails,
   channel names, and durations. Click to select, hit **+ Add to queue**, and
   download with the same controls you already know.
-- **Unlimited pagination** — browse as deep as YouTube goes with `‹ ›`
-  page buttons. Each page fetches a fresh batch of 10 results from YouTube.
-- **Duplicate protection** — once a video is in the queue, the button
-  changes to **✓ In queue** so you can't accidentally add it twice.
-- **Collapsible log** — the log panel collapses to a single header bar,
+- **Unlimited pagination** - browse as deep as YouTube goes with page
+  buttons. Each page fetches a fresh batch of 10 results from YouTube.
+- **Duplicate protection** - once a video is in the queue, the button
+  changes to **In queue** so you can't accidentally add it twice.
+- **Collapsible log** - the log panel collapses to a single header bar,
   giving the content area more room. Click to expand upward. Starts
   collapsed by default.
-- **Tighter layout** — both columns pack cleanly with no wasted space.
+- **Tighter layout** - both columns pack cleanly with no wasted space.
   Tooling aligns with the log bar. No scrollbar at default launch size.
 
 ---
@@ -77,18 +107,18 @@ keys, no accounts, no cookies. Powered entirely by `yt-dlp`'s public search.
 
 A clean semver reset for the Cove suite. v2.0.0 bundles the architectural
 rebuild (Electron + React) with the new format dropdowns and subtitle
-downloader. From this release forward, patch / minor / major bumps follow
-strict semver — bug-only fixes land as v2.0.x, new features as v2.x.0.
+downloader. From this release forward, patch/minor/major bumps follow
+strict semver.
 
-- **New dark UI** built in React — custom title bar, window chrome, live
+- **New dark UI** built in React - custom title bar, window chrome, live
   per-item progress bars, and a structured log panel with colored tags.
-- **Bulk queue**: paste as many links as you want, one per line, and hit
+- **Bulk queue** - paste as many links as you want, one per line, and hit
   Download once. Each item shows its own state (fetching / downloading /
   encoding / done / error) and live speed + percent.
 - **Custom output folder**, persisted between sessions, with an **Open
   Folder** button so you don't have to hunt for your downloads.
 - **Auto-detected browser cookies** for Firefox / Chrome / Brave /
-  Chromium / Edge — the app checks each browser's cookie database on disk
+  Chromium / Edge - the app checks each browser's cookie database on disk
   instead of asking `yt-dlp` to probe, so detection is instant and works
   offline. Firefox is preferred because its cookies are plain SQLite
   (Chromium-family browsers on Windows 10+ use app-bound encryption that
@@ -97,16 +127,16 @@ strict semver — bug-only fixes land as v2.0.x, new features as v2.x.0.
   binary running as Node (`ELECTRON_RUN_AS_NODE=1`). `yt-dlp`'s newer
   releases require a JavaScript runtime for YouTube; rather than bundling
   a separate ~120 MB Deno, Cove reuses the Node runtime already inside
-  Electron — no extra download.
-- **Self-updating**: the app checks its own GitHub releases on launch and
+  Electron.
+- **Self-updating** - the app checks its own GitHub releases on launch and
   offers a one-click update when a newer version is available (from
   v1.1.0).
-- **Reproducible cross-platform builds** via `electron-builder`: one `npm
+- **Reproducible cross-platform builds** via `electron-builder` - one `npm
   run dist:linux` / `npm run dist:win` command produces signed artifacts.
   CI builds both in parallel on tag push.
 
 What hasn't changed: **H.265 compression settings are identical to v1.0.0**.
-HandBrakeCLI at `x265`, CQ `31.5`, `--encoder-preset fast`, AAC 192 kbps —
+HandBrakeCLI at `x265`, CQ `31.5`, `--encoder-preset fast`, AAC 192 kbps -
 the sweet spot the v1.0.0 release landed on.
 
 ---
@@ -118,25 +148,25 @@ Grab a build from the
 
 | OS      | Artifact                                          | Notes                                  |
 | ------- | ------------------------------------------------- | -------------------------------------- |
-| Windows | `Cove-Video-Downloader-<version>-Setup.exe`       | NSIS installer — Start Menu + Desktop  |
+| Windows | `Cove-Video-Downloader-<version>-Setup.exe`       | NSIS installer - Start Menu + Desktop  |
 | Windows | `Cove-Video-Downloader-<version>-Portable.exe`    | Single-file, no install                |
 | Linux   | `Cove-Video-Downloader-<version>-x86_64.AppImage` | `chmod +x` and run                     |
 | Linux   | `Cove-Video-Downloader-<version>-amd64.deb`       | `sudo dpkg -i` on Debian/Ubuntu        |
 
 **Windows SmartScreen** may warn on first launch because the `.exe` isn't
-signed. Click **More info → Run anyway**.
+signed. Click **More info > Run anyway**.
 
 ### What ships inside each artifact
 
-- `yt-dlp` — fetched on first launch, auto-updated thereafter (stored in
+- `yt-dlp` - fetched on first launch, auto-updated thereafter (stored in
   `%APPDATA%\CoveVideoDownloader` on Windows, `~/.cove-video-downloader`
   on Linux).
-- `ffmpeg` + `ffprobe` — bundled in every artifact.
-- `HandBrakeCLI` — bundled on Windows. On Linux, install it yourself via
+- `ffmpeg` + `ffprobe` - bundled in every artifact.
+- `HandBrakeCLI` - bundled on Windows. On Linux, install it yourself via
   your package manager (`sudo apt install handbrake-cli`, `sudo pacman -S
   handbrake-cli`, or equivalent) if you want the **Compress** option to
   work. Cove will detect it on `PATH` at runtime.
-- A JavaScript runtime for YouTube — no separate download; Cove reuses the
+- A JavaScript runtime for YouTube - no separate download; Cove reuses the
   Node runtime embedded in Electron.
 
 ---
@@ -144,7 +174,7 @@ signed. Click **More info → Run anyway**.
 ## Features
 
 ### YouTube search
-Switch to the **Search** tab, type a query, and browse results — complete
+Switch to the **Search** tab, type a query, and browse results complete
 with thumbnails, channel names, and durations. Select a video and click
 **+ Add to queue** to drop it into the download queue. No API keys, no
 login, no cookies required.
@@ -180,7 +210,7 @@ but happens with already-optimised sources) it's automatically discarded
 and the original file is kept.
 
 ### Bulk queue
-Paste many links at once — one per line — or drop them in one at a time
+Paste many links at once, one per line, or drop them in one at a time
 and hit Download. Each item runs in order with its own progress bar, speed
 readout, and error state if something goes wrong.
 
@@ -194,7 +224,7 @@ via Smart Mode. **Open Folder** jumps your file manager straight there.
 
 ### Auto-detecting browser cookies
 For age-restricted or login-gated videos, Cove will hand your browser
-cookies to `yt-dlp` automatically. Detection is filesystem-based — no
+cookies to `yt-dlp` automatically. Detection is filesystem-based, no
 browser launches required. Supported: Firefox, Chrome, Brave, Chromium,
 Edge.
 
@@ -202,7 +232,7 @@ Edge.
 Anything `yt-dlp` supports: YouTube, Reddit, X (Twitter), Instagram,
 TikTok, Facebook, Twitch, Vimeo, Dailymotion, Bilibili, Tumblr, and
 hundreds more. DRM-protected streaming services (Netflix, Disney+, etc.)
-are not supported — that's a platform-level restriction, not a bug.
+are not supported - that's a platform-level restriction, not a bug.
 
 ### Self-updating
 Cove checks its own GitHub releases on launch and will offer a one-click
@@ -219,8 +249,8 @@ every launch.
 3. *(Optional)* Change **Quality**, pick a **Format** / **Codec**, set a
    **Proxy**, flip **Compress**, or pick a **Save To** folder. All settings
    are remembered for next time.
-4. Click **⬇ Download**.
-5. Click **📂 Open Folder** to reveal your files.
+4. Click **Download**.
+5. Click **Open Folder** to reveal your files.
 
 ---
 
@@ -254,7 +284,7 @@ npm run dist:linux   # release/Cove-Video-Downloader-<v>-x86_64.AppImage
 npm run dist:win     # release/Cove-Video-Downloader-<v>-{Setup,Portable}.exe
 ```
 
-Each script runs `scripts/fetch-runtimes.js` first (idempotent — already
+Each script runs `scripts/fetch-runtimes.js` first (idempotent, already
 downloaded binaries are kept) and then invokes `electron-builder`.
 
 ### Automated release on tag push
@@ -267,14 +297,14 @@ attaches all three artifacts to the matching GitHub Release.
 
 ## Built with
 
-- [Electron](https://www.electronjs.org) — app shell and embedded Node
+- [Electron](https://www.electronjs.org) - app shell and embedded Node
   runtime (doubles as the JS runtime `yt-dlp` needs for YouTube)
-- [React](https://react.dev) — dark UI
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — download engine, auto-updated
-- [FFmpeg](https://ffmpeg.org) — muxing, container conversion, audio extraction
-- [HandBrakeCLI](https://handbrake.fr) — optional H.265 compression
-- [electron-builder](https://www.electron.build) — packaging (NSIS + AppImage)
-- [electron-updater](https://www.electron.build/auto-update) — self-update
+- [React](https://react.dev) - dark UI
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - download engine, auto-updated
+- [FFmpeg](https://ffmpeg.org) - muxing, container conversion, audio extraction
+- [HandBrakeCLI](https://handbrake.fr) - optional H.265 compression
+- [electron-builder](https://www.electron.build) - packaging (NSIS + AppImage)
+- [electron-updater](https://www.electron.build/auto-update) - self-update
 
 ---
 
