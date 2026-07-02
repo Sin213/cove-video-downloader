@@ -10,6 +10,34 @@ app.setName('Cove Video Downloader');
 const _isPortable = setupPortableMode();
 if (!_isPortable) app.setPath('userData', path.join(app.getPath('appData'), APP_ID));
 
+// The AppImage launcher exports LD_LIBRARY_PATH pointing at the bundle's
+// libraries. shell.openPath spawns xdg-open with our environment, so the
+// opened file manager inherits it, loads the bundle's outdated libs, and
+// crashes on startup (e.g. liblzma "version XZ_5.4 not found"). Returns
+// null when not running from an AppImage.
+function appImageChildEnv() {
+  if (process.platform !== 'linux') return null;
+  if (!process.env.APPIMAGE && !process.env.APPDIR) return null;
+  const env = { ...process.env };
+  delete env.LD_LIBRARY_PATH;
+  delete env.LD_PRELOAD;
+  delete env.GSETTINGS_SCHEMA_DIR;
+  return env;
+}
+
+async function openPathExternal(target) {
+  const env = appImageChildEnv();
+  if (env) {
+    try {
+      spawn('xdg-open', [target], { env, detached: true, stdio: 'ignore' }).unref();
+      return '';
+    } catch {
+      // fall through to shell.openPath
+    }
+  }
+  return shell.openPath(target);
+}
+
 let mainWindow = null;
 let pyProc = null;        // Python backend child process
 let pyReady = false;      // flips true when tools_ready fires
@@ -221,7 +249,7 @@ ipcMain.handle('cove:folder:browse', async (_, initialPath) => {
   return res.filePaths[0];
 });
 ipcMain.handle('cove:folder:open', async (_, folderPath) => {
-  try { await shell.openPath(folderPath); } catch {}
+  try { await openPathExternal(folderPath); } catch {}
 });
 
 // Cookies file picker (Netscape cookies.txt exported from a browser extension).
