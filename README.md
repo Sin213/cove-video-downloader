@@ -5,13 +5,13 @@
 </p>
 
 <p align="center">
-  A dark-themed desktop video downloader.<br/>
+  A desktop video downloader with dark and light themes.<br/>
   Paste a link. Hit Download. Done.
 </p>
 
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-informational?style=flat-square)
-![Version](https://img.shields.io/badge/version-3.0.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-3.1.0-blue?style=flat-square)
 
 Cove Video Downloader is a thin, opinionated front-end over
 [`yt-dlp`](https://github.com/yt-dlp/yt-dlp). It picks the best quality
@@ -21,6 +21,24 @@ proxy support, and Smart Mode settings persistence are all built in.
 
 Part of the [Cove](https://github.com/Sin213?tab=repositories&q=cove) suite
 of small desktop tools.
+
+---
+
+## What's new in v3.1.0
+
+**Light mode.**
+
+- **Theme toggle in the title bar** - a sun/moon button sits just left of
+  the Minimize button. Dark mode shows a sun (click to go light), light
+  mode shows a moon (click to go dark). Same placement and behavior as the
+  rest of the Cove suite.
+- **Full light palette** - every surface, border, shadow, hover state, and
+  status color has a light-mode counterpart. Token values are shared with
+  Cove Download Manager and Cove Image Upscaler so all three apps look like
+  siblings in either theme.
+- **Persistent choice** - your theme is remembered across restarts and is
+  applied before first paint, so there is no dark flash when the app opens
+  in light mode.
 
 ---
 
@@ -172,6 +190,10 @@ signed. Click **More info > Run anyway**.
 ---
 
 ## Features
+
+### Light and dark themes
+Click the sun/moon button in the title bar to switch between the dark and
+light Cove palettes. The choice persists across restarts.
 
 ### YouTube search
 Switch to the **Search** tab, type a query, and browse results complete

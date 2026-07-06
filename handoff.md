@@ -1,43 +1,32 @@
-# Handoff: Search Tab + Collapsible Log
+# Handoff: Light Mode Toggle
 
 ## Goal
-Add a polished "Search" tab alongside "Video Links" in the left panel, and make the Log panel collapsible.
+Add a light/dark theme toggle matching cove-download-manager: sun/moon button in the titlebar control cluster, immediately left of Minimize. Dark mode shows a sun (click = go light), light mode shows a moon (click = go dark). Theme persists across restarts. Light palette token values mirror cove-download-manager's `_LIGHT` theme (which itself mirrors cove-image-upscaler's CSS custom properties) so the Cove apps share visual identity.
 
 ## Changed files
-- `renderer/index.html` — tabs, search UI, collapsible log, new icons/styles/state
-- `preload.js` — expose `search.run(query)` via contextBridge
-- `main.js` — IPC handler `cove:search:run` → `sendCommand({cmd:"search", params:{query}})`
-- `python/backend.py` — `_run_search()` helper + `elif cmd == "search"` dispatch branch
+- `renderer/index.html` - only file changed
 
-## Feature summary
-- Video Links and Search are tab buttons in the existing panel header area
-- Video Links tab: all existing URL paste/input/list/summary behavior preserved
-- Search tab: input + Search button → calls `yt-dlp "ytsearch10:<q>" --flat-playlist --dump-json`
-- Results appear as thumbnail rows; clicking selects and shows a detail card
-- "Add to queue" on selected card calls existing `addUrls(result.webpageUrl)`
-- Log panel header is clickable to collapse/expand; Clear button still works independently
-- Search runs in a daemon thread, does not touch the `_busy` download lock
+## Implementation summary
+- `:root` gains new CSS variables for every previously hard-coded dark-only color (window edge, scrollbar thumbs, hover backgrounds, progress track, toggle pill, titlebar tint, log console bg, badge/thumbnail gradients, panel/popup/badge shadows, app background gradient, danger text/border/soft, info blue).
+- New `:root[data-theme="light"]` block overrides the full palette with values mapped from cove-download-manager `theme.py` `_LIGHT`.
+- All hard-coded dark-only colors in the CSS and inline JSX styles were converted to the new variables (body border, scrollbars, resize grip, titlebar gradient, brand badge, ctrl button hovers, panel shadow, progress bar track, danger button/pill, toggle pill, log console, dropdown shadow/hover, link row hover, downloading state blue, empty-state thumbnails).
+- `WindowChrome` gains `theme` / `onToggleTheme` props; `ctrlBtn` helper gains a `tip` (tooltip/aria-label) parameter now used by all four buttons. New `IconSun` / `IconMoon` icons (same SVG paths as cove-image-upscaler's `ThemeToggle`).
+- Theme state lives in `CoveDownloader`, persisted to `localStorage["cove:theme"]` (the Cove web pattern from cove-image-upscaler; synchronous read so no flash). A small inline `<script>` in `<head>` applies the saved theme before first paint.
+- Dark mode remains the default and is visually unchanged (all dark variable values are the previous literals).
 
 ## Verification run
-- `python3 -m py_compile python/backend.py` → PASS
-- `git diff --check` → PASS
-- `npm start` manual smoke → NOT EXECUTED (no display server in this environment)
+- JSX compile check: extracted the `text/babel` script and ran it through `@babel/core` + `@babel/preset-react` -> "JSX compiles OK"
+- `timeout 12 npx electron . --enable-logging` -> app launched, ran 12s, no renderer/JS errors (only system fontconfig warnings)
+- `git diff --check` -> run before staging
 
-## Manual checks
+## Manual checks (for Sin)
 | Check | Status |
 |---|---|
-| App launches | NOT EXECUTED |
-| Video Links tab is default | NOT EXECUTED |
-| Existing URL add/paste/clear/queue flow works | NOT EXECUTED |
-| Existing download flow works | NOT EXECUTED |
-| Search tab hides URL paste UI | NOT EXECUTED |
-| Search tab can search YouTube | NOT EXECUTED |
-| Results show title + thumbnail | NOT EXECUTED |
-| Clicking result shows selected card | NOT EXECUTED |
-| Add to queue adds URL to existing queue | NOT EXECUTED |
-| Selected result downloadable via global controls | NOT EXECUTED |
-| Log collapses and expands | NOT EXECUTED |
-| Log Clear works without toggling collapse | NOT EXECUTED |
-| Collapsed log does not reserve body height | NOT EXECUTED |
+| Toggle appears left of Minimize | NOT EXECUTED (needs visual check) |
+| Sun in dark, moon in light, tooltips correct | NOT EXECUTED |
+| Light mode readable everywhere (log, dropdowns, danger buttons, progress) | NOT EXECUTED |
+| Theme persists across app restart | NOT EXECUTED |
+| No dark flash on light-mode startup | NOT EXECUTED |
 
-Reason NOT EXECUTED: no display server / headless environment.
+## Scope
+Only `renderer/index.html`. No main.js/preload.js/backend changes (persistence is renderer-side localStorage).

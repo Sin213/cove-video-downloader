@@ -31,18 +31,90 @@
       --violet-soft: rgba(124,92,255,0.14);
       --violet-ring: rgba(124,92,255,0.35);
       --danger: #ff6b6b;
+      --danger-text: #ff9b9b;
+      --danger-text-2: #ffc4c4;
+      --danger-soft: rgba(255,107,107,0.12);
+      --danger-border: rgba(255,107,107,0.4);
+      --danger-border-soft: rgba(255,107,107,0.25);
       --ok: #3ddc97;
       --warn: #ffb454;
+      --info: #60a5fa;
+      --window-edge: rgba(255,255,255,0.18);
+      --scroll-thumb: rgba(255,255,255,0.07);
+      --scroll-thumb-hover: rgba(255,255,255,0.14);
+      --hover-bg: rgba(255,255,255,0.06);
+      --hover-bg-soft: rgba(255,255,255,0.035);
+      --track: rgba(255,255,255,0.08);
+      --pill-off: rgba(255,255,255,0.10);
+      --titlebar-tint: rgba(255,255,255,0.025);
+      --console: #08080c;
+      --badge-grad: linear-gradient(160deg, #16161f 0%, #0d0d14 100%);
+      --thumb-grad: linear-gradient(160deg, #1a1a24, #0f0f17);
+      --shadow-panel: 0 1px 0 rgba(255,255,255,0.03) inset, 0 20px 40px -32px rgba(0,0,0,0.6);
+      --shadow-pop: 0 16px 36px rgba(0,0,0,0.55);
+      --shadow-badge: 0 6px 16px -6px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
+      --app-bg:
+        radial-gradient(1100px 560px at 88% -12%, rgba(80,230,207,0.08), transparent 60%),
+        radial-gradient(900px 520px at -8% 108%, rgba(124,92,255,0.07), transparent 60%),
+        linear-gradient(180deg, #0d0d14, #0a0a0f);
       --mono: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
       --sans: "Geist", "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    /* Light palette - token values mirror cove-download-manager's _LIGHT
+       theme so the two apps share visual identity across the boundary. */
+    :root[data-theme="light"] {
+      --bg: #f7f8fa;
+      --bg-2: #ffffff;
+      --panel: #ffffff;
+      --panel-2: #f5f7fa;
+      --panel-hi: #eaeef4;
+      --field: #f5f7fa;
+      --border: rgba(0,0,0,0.06);
+      --border-hi: rgba(0,0,0,0.10);
+      --text: #11181c;
+      --text-2: #5b646e;
+      --text-3: #828e9c;
+      --accent: #10b9a3;
+      --accent-2: #0d9e8a;
+      --accent-press: #0b8a78;
+      --accent-soft: rgba(16,185,163,0.12);
+      --accent-ring: rgba(16,185,163,0.45);
+      --accent-ink: #ffffff;
+      --violet: #6d4ae8;
+      --violet-soft: rgba(109,74,232,0.12);
+      --violet-ring: rgba(109,74,232,0.40);
+      --danger: #dc2626;
+      --danger-text: #dc2626;
+      --danger-text-2: #b91c1c;
+      --danger-soft: rgba(220,38,38,0.10);
+      --danger-border: rgba(220,38,38,0.4);
+      --danger-border-soft: rgba(220,38,38,0.3);
+      --ok: #16a34a;
+      --warn: #d97706;
+      --info: #2563eb;
+      --window-edge: rgba(0,0,0,0.28);
+      --scroll-thumb: rgba(0,0,0,0.10);
+      --scroll-thumb-hover: rgba(0,0,0,0.20);
+      --hover-bg: rgba(0,0,0,0.05);
+      --hover-bg-soft: rgba(0,0,0,0.035);
+      --track: rgba(0,0,0,0.10);
+      --pill-off: rgba(0,0,0,0.15);
+      --titlebar-tint: rgba(0,0,0,0.015);
+      --console: #f5f7fa;
+      --badge-grad: linear-gradient(160deg, #ffffff 0%, #eaeef4 100%);
+      --thumb-grad: linear-gradient(160deg, #eaeef4, #dce2e9);
+      --shadow-panel: 0 1px 0 rgba(255,255,255,0.7) inset, 0 20px 40px -32px rgba(0,0,0,0.18);
+      --shadow-pop: 0 16px 36px rgba(0,0,0,0.18);
+      --shadow-badge: 0 6px 16px -8px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.8);
+      --app-bg:
+        radial-gradient(1100px 560px at 88% -12%, rgba(16,185,163,0.06), transparent 60%),
+        radial-gradient(900px 520px at -8% 108%, rgba(109,74,232,0.05), transparent 60%),
+        linear-gradient(180deg, #ffffff, #f3f5f8);
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0; padding: 0; height: 100%;
-      background:
-        radial-gradient(1100px 560px at 88% -12%, rgba(80,230,207,0.08), transparent 60%),
-        radial-gradient(900px 520px at -8% 108%, rgba(124,92,255,0.07), transparent 60%),
-        linear-gradient(180deg, var(--bg-2), #0a0a0f);
+      background: var(--app-bg);
       color: var(--text);
       font-family: var(--sans);
       font-size: 14px;
@@ -50,13 +122,13 @@
       -moz-osx-font-smoothing: grayscale;
       overflow: hidden;
       user-select: none;
-      border: 4px solid rgba(255, 255, 255, 0.18);
+      border: 4px solid var(--window-edge);
     }
     #root { height: 100%; display: flex; align-items: stretch; }
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); background-clip: padding-box; border: 2px solid transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); background-clip: padding-box; border: 2px solid transparent; }
     .focusable:focus-visible,
     input:focus-visible, button:focus-visible, select:focus-visible, textarea:focus-visible {
       outline: 2px solid var(--accent);
@@ -92,10 +164,17 @@
       height: 14px;
       cursor: nwse-resize;
       z-index: 51;
-      background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.18) 50%);
+      background: linear-gradient(135deg, transparent 50%, var(--window-edge) 50%);
       -webkit-app-region: no-drag;
     }
   </style>
+  <script>
+    // Apply the saved theme before first paint so there is no dark flash.
+    try {
+      if (localStorage.getItem("cove:theme") === "light")
+        document.documentElement.setAttribute("data-theme", "light");
+    } catch (e) {}
+  </script>
 </head>
 <body>
   <div id="root"></div>
@@ -129,6 +208,8 @@ const IconTerminal  = (p) => <Icon {...p}><path d="M4 17l5-5-5-5"/><path d="M12 
 const IconStop      = (p) => <Icon {...p}><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/></Icon>;
 const IconSearch    = (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></Icon>;
 const IconChevronD  = ({ up, ...p }) => <Icon {...p}><path d={up ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"}/></Icon>;
+const IconSun       = (p) => <Icon {...p}><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/><path d="M17.66 17.66l1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M4.93 19.07l1.41-1.41"/><path d="M17.66 6.34l1.41-1.41"/></Icon>;
+const IconMoon      = (p) => <Icon {...p}><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></Icon>;
 const IconDot = ({ size = 8, color = "currentColor" }) => (
   <span style={{ display:"inline-block", width:size, height:size, borderRadius:"50%", background:color, flexShrink:0 }}/>
 );
@@ -152,17 +233,17 @@ const chromeStyles = {
     gridTemplateColumns: "1fr auto 1fr",
     alignItems: "center",
     padding: "0 12px 0 14px",
-    background: "linear-gradient(180deg, rgba(255,255,255,0.025), transparent)",
+    background: "linear-gradient(180deg, var(--titlebar-tint), transparent)",
     borderBottom: "1px solid var(--border)",
     backdropFilter: "blur(12px)",
   },
   brand: { display: "flex", alignItems: "center", gap: 10, color: "var(--text-2)" },
   brandBadge: {
     width: 28, height: 28, borderRadius: 9,
-    background: "linear-gradient(160deg, #16161f 0%, #0d0d14 100%)",
+    background: "var(--badge-grad)",
     border: "1px solid var(--border-hi)",
     display: "flex", alignItems: "center", justifyContent: "center",
-    boxShadow: "0 6px 16px -6px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05)",
+    boxShadow: "var(--shadow-badge)",
   },
   titleText: {
     fontSize: 13, fontWeight: 500, color: "var(--text)",
@@ -184,11 +265,13 @@ const chromeStyles = {
   },
 };
 
-function WindowChrome({ title, version, children, footer, onMin, onMax, onClose }) {
+function WindowChrome({ title, version, children, footer, theme, onToggleTheme, onMin, onMax, onClose }) {
   const [hover, setHover] = React.useState(null);
-  const ctrlBtn = (key, hoverBg, hoverColor, icon, action) => (
+  const ctrlBtn = (key, hoverBg, hoverColor, icon, action, tip) => (
     <button
       className="no-drag"
+      title={tip}
+      aria-label={tip}
       style={{
         ...chromeStyles.ctrlBtn,
         background: hover === key ? hoverBg : "transparent",
@@ -212,9 +295,13 @@ function WindowChrome({ title, version, children, footer, onMin, onMax, onClose 
           <span style={chromeStyles.version}>{version}</span>
         </div>
         <div style={chromeStyles.controls}>
-          {ctrlBtn("min",   "rgba(255,255,255,0.06)", "var(--text)", <IconMinus size={14}/>, onMin)}
-          {ctrlBtn("max",   "rgba(255,255,255,0.06)", "var(--text)", <div style={{width:10,height:10,border:"1.5px solid currentColor",borderRadius:2}}/>, onMax)}
-          {ctrlBtn("close", "#e5484d", "#fff",         <IconX size={14}/>, onClose)}
+          {ctrlBtn("theme", "var(--hover-bg)", "var(--text)",
+            theme === "dark" ? <IconSun size={14}/> : <IconMoon size={14}/>,
+            onToggleTheme,
+            theme === "dark" ? "Switch to light mode" : "Switch to dark mode")}
+          {ctrlBtn("min",   "var(--hover-bg)", "var(--text)", <IconMinus size={14}/>, onMin, "Minimize")}
+          {ctrlBtn("max",   "var(--hover-bg)", "var(--text)", <div style={{width:10,height:10,border:"1.5px solid currentColor",borderRadius:2}}/>, onMax, "Maximize")}
+          {ctrlBtn("close", "#e5484d", "#fff",           <IconX size={14}/>, onClose, "Close")}
         </div>
       </div>
       <div style={{ flex: 1, overflow: "hidden", background: "transparent" }}>
@@ -241,7 +328,7 @@ const S = {
   sub:     { margin: 0, fontSize: 13, color: "var(--text-3)" },
   panel: {
     background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 14, padding: 14, flexShrink: 0,
-    boxShadow: "0 1px 0 rgba(255,255,255,0.03) inset, 0 20px 40px -32px rgba(0,0,0,0.6)",
+    boxShadow: "var(--shadow-panel)",
   },
   panelHead: {
     display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 12,
@@ -267,7 +354,7 @@ const S = {
   },
   linkUrl: { flex: 1, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   linkMeta: { color: "var(--text-3)", fontSize: 11 },
-  progBar: { height: 5, background: "rgba(255,255,255,0.08)", borderRadius: 3, overflow: "hidden", flexBasis: 120, minWidth: 80, flexShrink: 0 },
+  progBar: { height: 5, background: "var(--track)", borderRadius: 3, overflow: "hidden", flexBasis: 120, minWidth: 80, flexShrink: 0 },
   progFill: (pct, color) => ({ height: "100%", width: `${pct}%`, background: color, transition: "width 200ms linear", borderRadius: 3, boxShadow: `0 0 8px ${color}` }),
   btn: {
     display: "inline-flex", alignItems: "center", gap: 7,
@@ -281,7 +368,7 @@ const S = {
     background: "var(--accent)", color: "var(--accent-ink)", border: "1px solid var(--accent)",
     fontWeight: 600, boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18), 0 8px 24px -10px var(--accent-ring)",
   },
-  btnDanger:  { background: "transparent", border: "1px solid rgba(255,107,107,0.25)", color: "#ff9b9b" },
+  btnDanger:  { background: "transparent", border: "1px solid var(--danger-border-soft)", color: "var(--danger-text)" },
   fieldLabel: {
     display: "block", fontSize: 10.5, fontWeight: 500, color: "var(--text-3)",
     letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 6, fontFamily: "var(--mono)",
@@ -305,7 +392,7 @@ const S = {
     cursor: "pointer", userSelect: "none",
   },
   toggle: (on) => ({
-    width: 32, height: 18, borderRadius: 999, background: on ? "var(--accent)" : "rgba(255,255,255,0.10)",
+    width: 32, height: 18, borderRadius: 999, background: on ? "var(--accent)" : "var(--pill-off)",
     position: "relative", transition: "background 120ms", flexShrink: 0,
   }),
   toggleDot: (on) => ({
@@ -313,7 +400,7 @@ const S = {
     background: on ? "var(--accent-ink)" : "#9a9aae", transition: "left 160ms cubic-bezier(.5,.8,.4,1)",
   }),
   log: {
-    background: "#08080c", border: "1px solid var(--border)", borderRadius: 10, padding: 12,
+    background: "var(--console)", border: "1px solid var(--border)", borderRadius: 10, padding: 12,
     fontFamily: "var(--mono)", fontSize: 12, lineHeight: 1.6, color: "var(--text-2)",
     flex: 1, overflow: "auto", minHeight: 160,
     userSelect: "text", WebkitUserSelect: "text", cursor: "text",
@@ -352,7 +439,7 @@ const S = {
     position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 20,
     background: "var(--panel-2)", border: "1px solid var(--border-hi)", borderRadius: 8,
     padding: 4, display: "flex", flexDirection: "column", gap: 1,
-    boxShadow: "0 16px 36px rgba(0,0,0,0.55)", maxHeight: 260, overflowY: "auto",
+    boxShadow: "var(--shadow-pop)", maxHeight: 260, overflowY: "auto",
   },
   dropdownOpt: (on) => ({
     textAlign: "left", padding: "7px 10px", fontSize: 12.5, fontFamily: "var(--mono)",
@@ -425,7 +512,7 @@ function Btn({ children, variant = "default", icon, onClick, disabled, style }) 
   const [hover, setHover] = React.useState(false);
   const hoverStyle = !disabled && hover ? (
     variant === "primary" ? { background: "var(--accent-2)", transform: "translateY(-1px)" } :
-    variant === "danger"  ? { background: "rgba(255,107,107,0.12)", color: "#ffc4c4", borderColor: "rgba(255,107,107,0.4)" } :
+    variant === "danger"  ? { background: "var(--danger-soft)", color: "var(--danger-text-2)", borderColor: "var(--danger-border)" } :
                             { background: "var(--panel-hi)", color: "var(--accent)", borderColor: "var(--accent-ring)" }
   ) : {};
   return (
@@ -509,7 +596,7 @@ function Dropdown({ value, options, onChange }) {
               aria-selected={o.v === value}
               style={S.dropdownOpt(o.v === value)}
               onClick={() => { onChange(o.v); setOpen(false); }}
-              onMouseEnter={(e) => { if (o.v !== value) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+              onMouseEnter={(e) => { if (o.v !== value) e.currentTarget.style.background = "var(--hover-bg)"; }}
               onMouseLeave={(e) => { if (o.v !== value) e.currentTarget.style.background = "transparent"; }}
             >
               {o.label}
@@ -528,7 +615,7 @@ function LinkRow({ item, onRemove, onRedownload }) {
     state === "done"       ? "var(--accent)" :
     state === "error"      ? "var(--danger)" :
     state === "encoding"   ? "var(--warn)"   :
-    state === "downloading"|| state === "fetching" ? "#60a5fa" : "var(--text-3)";
+    state === "downloading"|| state === "fetching" ? "var(--info)" : "var(--text-3)";
   const statusText =
     state === "idle"         ? "queued" :
     state === "fetching"     ? "fetching…" :
@@ -538,7 +625,7 @@ function LinkRow({ item, onRemove, onRedownload }) {
     state === "error"        ? (item.err || "error") : "";
   return (
     <div
-      style={{ ...S.linkRow, background: hover ? "rgba(255,255,255,0.035)" : "transparent" }}
+      style={{ ...S.linkRow, background: hover ? "var(--hover-bg-soft)" : "transparent" }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
@@ -594,7 +681,7 @@ function CoveDownloader() {
   const [compress,    setCompress]    = React.useState(false);
   const [running,     setRunning]     = React.useState(false);
   const [draft,       setDraft]       = React.useState("");
-  const [version,     setVersion]     = React.useState("v3.0.0");
+  const [version,     setVersion]     = React.useState("v3.1.0");
   const [videoCodec,  setVideoCodec]  = React.useState("auto");
   // Cookies source: "auto"/"firefox"/"chrome"/"brave"/"chromium"/"edge"/"none"
   // or an absolute path to a Netscape cookies.txt file.
@@ -617,6 +704,16 @@ function CoveDownloader() {
     { name: "HandBrake", v: "…", ok: null },
   ]);
   const [log, setLog] = React.useState([]);
+  // Theme: dark is the default; persisted in localStorage (the head script
+  // applies it before first paint, this keeps state + storage in sync).
+  const [theme, setTheme] = React.useState(() => {
+    try { return localStorage.getItem("cove:theme") === "light" ? "light" : "dark"; }
+    catch { return "dark"; }
+  });
+  React.useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try { localStorage.setItem("cove:theme", theme); } catch {}
+  }, [theme]);
   const logRef  = React.useRef(null);
   const inputRef = React.useRef(null);
 
@@ -638,7 +735,7 @@ function CoveDownloader() {
     const boot = async () => {
       if (!API()) {
         // ── Preview / demo mode (no Electron backend present) ──
-        setVersion("v3.0.0");
+        setVersion("v3.1.0");
         setSavePath("/home/sin/Downloads");
         setItems([
           { id: uid(), url: "https://www.youtube.com/watch?v=bd-MRcTbx7k", state: "done", pct: 100, speed: "", size: 48_300_000 },
@@ -921,6 +1018,8 @@ function CoveDownloader() {
     <WindowChrome
       title="Cove Video Downloader"
       version={version}
+      theme={theme}
+      onToggleTheme={() => setTheme(t => t === "dark" ? "light" : "dark")}
       onMin={   () => API()?.win.minimize()       }
       onMax={   () => API()?.win.maximizeToggle() }
       onClose={ () => API()?.win.close()          }
@@ -994,7 +1093,7 @@ function CoveDownloader() {
                 <div style={S.linksArea}>
                   {items.length === 0 ? (
                     <div style={S.linksEmpty}>
-                      <div style={{ width:40, height:40, borderRadius:12, background:"linear-gradient(160deg,#1a1a24,#0f0f17)", border:"1px solid var(--border-hi)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
+                      <div style={{ width:40, height:40, borderRadius:12, background:"var(--thumb-grad)", border:"1px solid var(--border-hi)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
                         <IconFilm size={20}/>
                       </div>
                       <div>No links yet</div>
@@ -1063,7 +1162,7 @@ function CoveDownloader() {
                     </div>
                   ) : searchResults.length === 0 ? (
                     <div style={S.linksEmpty}>
-                      <div style={{ width:40, height:40, borderRadius:12, background:"linear-gradient(160deg,#1a1a24,#0f0f17)", border:"1px solid var(--border-hi)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
+                      <div style={{ width:40, height:40, borderRadius:12, background:"var(--thumb-grad)", border:"1px solid var(--border-hi)", display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text-3)" }}>
                         <IconSearch size={20}/>
                       </div>
                       {lastSearch
@@ -1307,7 +1406,7 @@ function CoveDownloader() {
                   variant="danger"
                   icon={<IconStop size={14}/>}
                   onClick={stopDownload}
-                  style={{ justifyContent:"center", padding:"11px 14px", fontSize:13.5, borderColor:"rgba(255,107,107,0.4)", color:"#ffc4c4" }}
+                  style={{ justifyContent:"center", padding:"11px 14px", fontSize:13.5, borderColor:"var(--danger-border)", color:"var(--danger-text-2)" }}
                 >
                   Stop all
                 </Btn>
