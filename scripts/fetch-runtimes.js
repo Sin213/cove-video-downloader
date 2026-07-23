@@ -56,6 +56,16 @@ function download(url, dest) {
 
 function sh(cmd) { execSync(cmd, { stdio: 'inherit' }); }
 
+// Cross-platform zip extraction. Windows has no `unzip`, so use PowerShell's
+// Expand-Archive there; fall back to `unzip` on Linux/macOS.
+function unzip(zip, dest) {
+  if (process.platform === 'win32') {
+    sh(`powershell -NoProfile -NonInteractive -Command "Expand-Archive -LiteralPath '${zip}' -DestinationPath '${dest}' -Force"`);
+  } else {
+    sh(`unzip -q -o "${zip}" -d "${dest}"`);
+  }
+}
+
 // ─── Linux ────────────────────────────────────────────────────────────────
 async function fetchLinux() {
   const ffmpegBin  = path.join(OUT, 'ffmpeg');
@@ -93,7 +103,7 @@ async function fetchWin() {
   if (!fs.existsSync(PY_EXE)) {
     console.log(`[fetch-runtimes] win: downloading Python ${PY_VER}`);
     await download(PY_URL, PY_ZIP);
-    sh(`unzip -o "${PY_ZIP}" -d "${OUT}"`);
+    unzip(PY_ZIP, OUT);
     fs.unlinkSync(PY_ZIP);
     if (fs.existsSync(PTH_FILE)) {
       let c = fs.readFileSync(PTH_FILE, 'utf8');
@@ -117,7 +127,7 @@ async function fetchWin() {
     await download(url, zip);
     const extractDir = path.join(OUT, 'ff-extract');
     fs.mkdirSync(extractDir, { recursive: true });
-    sh(`unzip -q -o "${zip}" -d "${extractDir}"`);
+    unzip(zip, extractDir);
     const top = fs.readdirSync(extractDir).find(
       (n) => fs.statSync(path.join(extractDir, n)).isDirectory()
     );
@@ -143,7 +153,7 @@ async function fetchWin() {
     const hbZip = path.join(OUT, 'handbrake.zip');
     console.log(`[fetch-runtimes] win: downloading HandBrakeCLI ${HB_VER}`);
     await download(hbUrl, hbZip);
-    sh(`unzip -q -o "${hbZip}" -d "${OUT}"`);
+    unzip(hbZip, OUT);
     fs.unlinkSync(hbZip);
     console.log('[fetch-runtimes] win: HandBrakeCLI ready');
   } else {

@@ -478,74 +478,101 @@ def _run_download(params):
                     cmd.extend(["--ffmpeg-location", ffmpeg_loc])
                 if electron_node:
                     cmd.extend(["--js-runtimes", f"node:{electron_node}"])
+                # yt-dlp (2025+) needs the yt-dlp-ejs challenge-solver scripts
+                # to crack YouTube's n-challenge. They are NOT bundled, and
+                # remote fetching is disabled by default, so without this flag
+                # only image formats resolve. A JS runtime alone is not enough.
+                cmd.extend(["--remote-components", "ejs:github"])
+                cookie_args = []
                 if cookies_file:
-                    cmd.extend(["--cookies", cookies_file])
+                    cookie_args = ["--cookies", cookies_file]
                 elif cookies_browser:
-                    cmd.extend(["--cookies-from-browser", cookies_browser])
+                    cookie_args = ["--cookies-from-browser", cookies_browser]
                 if proxy_url:
                     cmd.extend(["--proxy", proxy_url])
-                cmd.append(url)
+
+                # Cookie fallback. Browser/file cookies unlock private and
+                # age-gated videos, but a logged-in YouTube session pushes
+                # extraction onto the `tv` client, whose n-challenge currently
+                # fails on public videos ("Only images available"). So try WITH
+                # cookies first, then retry WITHOUT them before giving up.
+                attempts = [cookie_args]
+                if cookie_args:
+                    attempts.append([])
 
                 emit({"type": "item_state", "id": item_id,
                       "state": "downloading", "pct": 0, "speed": ""})
                 log("yt-dlp", f"[{i}/{len(urls)}] {url}", "dim")
 
-                proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    stdin=subprocess.DEVNULL,
-                    text=True, bufsize=1, creationflags=creationflags,
-                    env=child_env,
-                )
                 downloaded_file = None
                 cookie_error    = False
+                returncode      = 1
 
-                for line in proc.stdout:
-                    if _cancel.is_set():
-                        proc.terminate()
+                for attempt_idx, ca in enumerate(attempts):
+                    if attempt_idx > 0:
+                        log("yt-dlp", "Extraction failed - retrying without cookies...", "warn")
+                    run_cmd = cmd + ca + [url]
+
+                    proc = subprocess.Popen(
+                        run_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        stdin=subprocess.DEVNULL,
+                        text=True, bufsize=1, creationflags=creationflags,
+                        env=child_env,
+                    )
+                    downloaded_file = None
+                    cookie_error    = False
+
+                    for line in proc.stdout:
+                        if _cancel.is_set():
+                            proc.terminate()
+                            break
+                        s = line.strip()
+                        if "[download]" in s and "%" in s:
+                            m = re.search(r"(\d+\.?\d*)%.*?(\d+\.?\d+\s*\w+/s)", s)
+                            if m:
+                                pct   = float(m.group(1))
+                                speed = m.group(2)
+                                emit({"type": "item_state", "id": item_id,
+                                      "state": "downloading", "pct": pct, "speed": speed})
+                        if "[Merger] Merging formats into" in s:
+                            m = re.search(r'"([^"]+)"', s)
+                            if m:
+                                downloaded_file = m.group(1)
+                        elif "[ExtractAudio] Destination:" in s:
+                            downloaded_file = s.split("Destination:", 1)[1].strip()
+                        elif "Writing video subtitles to:" in s and is_subs:
+                            downloaded_file = s.split("to:", 1)[1].strip()
+                        elif "[download] Destination:" in s and not is_audio and not is_subs:
+                            candidate = s.split("Destination:", 1)[1].strip()
+                            if candidate.endswith(f".{video_fmt}"):
+                                downloaded_file = candidate
+                        elif "has already been downloaded" in s:
+                            candidate = (s.replace("[download]", "")
+                                          .replace("has already been downloaded", "").strip())
+                            if is_audio or candidate.endswith(f".{video_fmt}"):
+                                downloaded_file = candidate
+                        else:
+                            low = s.lower()
+                            # Explicit cookie-decrypt failures (Chrome 127+
+                            # app-bound encryption on Windows is the common one)
+                            # surface here too - treating them as cookie errors
+                            # lets the UI suggest the right fix (pick Firefox or
+                            # a cookies.txt file).
+                            if ("login" in low or "sign in" in low or "403" in s
+                                    or "failed to decrypt" in low
+                                    or "could not copy" in low
+                                    or "dpapi" in low
+                                    or "app-bound" in low):
+                                cookie_error = True
+                        if s:
+                            log("yt-dlp", s, "dim")
+
+                    proc.wait()
+                    returncode = proc.returncode
+                    if returncode == 0 or _cancel.is_set():
                         break
-                    s = line.strip()
-                    if "[download]" in s and "%" in s:
-                        m = re.search(r"(\d+\.?\d*)%.*?(\d+\.?\d+\s*\w+/s)", s)
-                        if m:
-                            pct   = float(m.group(1))
-                            speed = m.group(2)
-                            emit({"type": "item_state", "id": item_id,
-                                  "state": "downloading", "pct": pct, "speed": speed})
-                    if "[Merger] Merging formats into" in s:
-                        m = re.search(r'"([^"]+)"', s)
-                        if m:
-                            downloaded_file = m.group(1)
-                    elif "[ExtractAudio] Destination:" in s:
-                        downloaded_file = s.split("Destination:", 1)[1].strip()
-                    elif "Writing video subtitles to:" in s and is_subs:
-                        downloaded_file = s.split("to:", 1)[1].strip()
-                    elif "[download] Destination:" in s and not is_audio and not is_subs:
-                        candidate = s.split("Destination:", 1)[1].strip()
-                        if candidate.endswith(f".{video_fmt}"):
-                            downloaded_file = candidate
-                    elif "has already been downloaded" in s:
-                        candidate = (s.replace("[download]", "")
-                                      .replace("has already been downloaded", "").strip())
-                        if is_audio or candidate.endswith(f".{video_fmt}"):
-                            downloaded_file = candidate
-                    else:
-                        low = s.lower()
-                        # Explicit cookie-decrypt failures (Chrome 127+
-                        # app-bound encryption on Windows is the common one)
-                        # surface here too - treating them as cookie errors
-                        # lets the UI suggest the right fix (pick Firefox or
-                        # a cookies.txt file).
-                        if ("login" in low or "sign in" in low or "403" in s
-                                or "failed to decrypt" in low
-                                or "could not copy" in low
-                                or "dpapi" in low
-                                or "app-bound" in low):
-                            cookie_error = True
-                    if s:
-                        log("yt-dlp", s, "dim")
 
-                proc.wait()
-                if proc.returncode != 0:
+                if returncode != 0:
                     fail += 1
                     err_msg = ("Cookies issue - try picking Firefox or a cookies.txt file in Destination → Cookies."
                                if cookie_error else "Download failed.")
