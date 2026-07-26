@@ -470,9 +470,6 @@ def _run_download(params):
                     }.get(video_codec)
                     if codec_sort:
                         cmd.extend(["-S", codec_sort])
-                    if not cookies_browser and not cookies_file:
-                        cmd.extend(["--extractor-args",
-                                    "youtube:player_client=android_vr,android"])
 
                 if ffmpeg_loc:
                     cmd.extend(["--ffmpeg-location", ffmpeg_loc])
@@ -505,13 +502,25 @@ def _run_download(params):
                 log("yt-dlp", f"[{i}/{len(urls)}] {url}", "dim")
 
                 downloaded_file = None
-                cookie_error    = False
-                returncode      = 1
+                cookie_read_error = False   # browser cookie DB unreadable
+                bot_check_error   = False   # YouTube "sign in to confirm..."
+                returncode        = 1
 
                 for attempt_idx, ca in enumerate(attempts):
                     if attempt_idx > 0:
                         log("yt-dlp", "Extraction failed - retrying without cookies...", "warn")
-                    run_cmd = cmd + ca + [url]
+                    # The android_vr/android clients dodge YouTube's bot check
+                    # on public videos, but they must NOT be combined with a
+                    # logged-in session. So the flag is decided per attempt off
+                    # the cookies actually in use - not off the configured
+                    # source. Getting this wrong meant a Firefox user's
+                    # cookie-less retry ran on the default web client and hit
+                    # "Sign in to confirm you're not a bot" every time.
+                    run_cmd = list(cmd)
+                    if not ca:
+                        run_cmd.extend(["--extractor-args",
+                                        "youtube:player_client=android_vr,android"])
+                    run_cmd += ca + [url]
 
                     proc = subprocess.Popen(
                         run_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -520,7 +529,6 @@ def _run_download(params):
                         env=child_env,
                     )
                     downloaded_file = None
-                    cookie_error    = False
 
                     for line in proc.stdout:
                         if _cancel.is_set():
@@ -553,17 +561,28 @@ def _run_download(params):
                                 downloaded_file = candidate
                         else:
                             low = s.lower()
-                            # Explicit cookie-decrypt failures (Chrome 127+
-                            # app-bound encryption on Windows is the common one)
-                            # surface here too - treating them as cookie errors
-                            # lets the UI suggest the right fix (pick Firefox or
-                            # a cookies.txt file).
-                            if ("login" in low or "sign in" in low or "403" in s
-                                    or "failed to decrypt" in low
+                            # Two distinct failure classes that used to be
+                            # collapsed into one misleading "cookies issue"
+                            # message. Cookie-DB read failures (Chrome 127+
+                            # app-bound encryption on Windows, or a browser
+                            # holding a lock on the file) are actionable by
+                            # switching cookie source. A YouTube bot check is
+                            # not - it usually means a stale yt-dlp.
+                            if ("failed to decrypt" in low
                                     or "could not copy" in low
                                     or "dpapi" in low
-                                    or "app-bound" in low):
-                                cookie_error = True
+                                    or "app-bound" in low
+                                    or "unsupported browser" in low
+                                    or ("cookie" in low and "database" in low)):
+                                cookie_read_error = True
+                            elif ("sign in to confirm" in low
+                                    or "not a bot" in low
+                                    or "confirm your age" in low
+                                    or "login required" in low
+                                    or "private video" in low
+                                    or "members-only" in low
+                                    or "http error 403" in low):
+                                bot_check_error = True
                         if s:
                             log("yt-dlp", s, "dim")
 
@@ -574,8 +593,14 @@ def _run_download(params):
 
                 if returncode != 0:
                     fail += 1
-                    err_msg = ("Cookies issue - try picking Firefox or a cookies.txt file in Destination → Cookies."
-                               if cookie_error else "Download failed.")
+                    if cookie_read_error:
+                        err_msg = ("Couldn't read browser cookies - close the browser, "
+                                   "or pick Firefox / a cookies.txt file in Destination → Cookies.")
+                    elif bot_check_error:
+                        err_msg = ("YouTube blocked this request - update yt-dlp, "
+                                   "or sign in via Destination → Cookies if the video is private.")
+                    else:
+                        err_msg = "Download failed - see the log for details."
                     emit({"type": "item_state", "id": item_id,
                           "state": "error", "err": err_msg})
                     log("dl", err_msg, "err")
@@ -776,9 +801,14 @@ def handle_command(cmd_obj):
 
 
 def main():
-    # unbuffered stdout so events reach Electron the instant they're emitted
+    # unbuffered stdout so events reach Electron the instant they're emitted.
+    # UTF-8 is forced here too: emit() uses ensure_ascii=False, so a non-ASCII
+    # char in any log line would raise UnicodeEncodeError on a cp1252 Windows
+    # console and kill the emitting thread. Electron sets PYTHONIOENCODING,
+    # but this keeps the backend safe when run outside it.
     try:
-        sys.stdout.reconfigure(line_buffering=True)
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace",
+                               line_buffering=True)
     except Exception:
         pass
 
