@@ -21,6 +21,7 @@ cove_icon.ico
 # Local AI/audit scratch files
 .audit/
 codex-reviews/
+bug.md
 
 # Personal agent / workflow config
 CLAUDE.md
@@ -33,3 +34,4 @@ AGENTS.md
 
 # Session aids (orientation snapshots)
 *-orientation.md
+.commandcode/
