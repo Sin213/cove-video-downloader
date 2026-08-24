@@ -15,7 +15,36 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+
+      - name: Run backend unit tests
+        run: python -m pytest tests/ -q
+
+      # A tag that disagrees with package.json ships artifacts whose filenames
+      # do not match the release they are attached to.
+      - name: Verify tag matches package.json version
+        if: github.ref_type == 'tag'
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$pkg" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg"
+            exit 1
+          fi
+          echo "tag and package.json agree on $pkg"
+
   build-linux:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,12 +66,24 @@ jobs:
       - name: Build Linux AppImage + deb
         run: npm run dist:linux -- --publish never
 
+      # `[ -f "$f" ] && ...` as the last command in the loop body makes the
+      # step exit non-zero when a glob matches nothing, so a dropped target
+      # took down the checksum step instead of the build step. Count matches
+      # and fail loudly only when nothing at all was produced.
       - name: Generate SHA256 checksums
         run: |
           cd release
+          shopt -s nullglob
+          n=0
           for f in *.AppImage *.deb; do
-            [ -f "$f" ] && sha256sum "$f" > "$f.sha256"
+            sha256sum "$f" > "$f.sha256"
+            n=$((n + 1))
           done
+          if [ "$n" -eq 0 ]; then
+            echo "::error::no Linux artifacts were produced"
+            exit 1
+          fi
+          echo "checksummed $n artifact(s)"
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -56,6 +97,7 @@ jobs:
           if-no-files-found: error
 
   build-windows:
+    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,9 +118,17 @@ jobs:
         shell: bash
         run: |
           cd release
+          shopt -s nullglob
+          n=0
           for f in *-Setup.exe *-Portable.exe; do
-            [ -f "$f" ] && sha256sum "$f" > "$f.sha256"
+            sha256sum "$f" > "$f.sha256"
+            n=$((n + 1))
           done
+          if [ "$n" -eq 0 ]; then
+            echo "::error::no Windows artifacts were produced"
+            exit 1
+          fi
+          echo "checksummed $n artifact(s)"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4

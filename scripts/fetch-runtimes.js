@@ -33,24 +33,39 @@ if (!target || !['linux', 'win'].includes(target)) {
 const OUT = path.join(ROOT, 'runtimes', target);
 fs.mkdirSync(OUT, { recursive: true });
 
-function download(url, dest) {
+// The write stream is opened only after the response is known good, and any
+// partial file is removed on failure. Creating it up-front left a zero-byte
+// or half-written binary behind on every non-200, which the `existsSync`
+// guards above then treated as a successful previous fetch.
+function download(url, dest, redirects = 0) {
   return new Promise((resolve, reject) => {
-    const f = fs.createWriteStream(dest);
-    const go = (u) => {
-      https.get(u, { headers: { 'User-Agent': 'cove-video-downloader-builder' } }, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          res.resume();
-          return go(res.headers.location);
-        }
-        if (res.statusCode !== 200) {
-          reject(new Error(`GET ${u} → ${res.statusCode}`));
-          return;
-        }
-        res.pipe(f);
-        f.on('finish', () => f.close(resolve));
-      }).on('error', reject);
+    if (redirects > 5) return reject(new Error(`too many redirects for ${url}`));
+
+    const cleanup = (err) => {
+      fs.rm(dest, { force: true }, () => reject(err));
     };
-    go(url);
+
+    const req = https.get(url, {
+      headers: { 'User-Agent': 'cove-video-downloader-builder' },
+      timeout: 120000,
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        return resolve(download(new URL(res.headers.location, url).href, dest, redirects + 1));
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`GET ${url} -> ${res.statusCode}`));
+      }
+      const f = fs.createWriteStream(dest);
+      f.on('error', cleanup);
+      res.on('error', cleanup);
+      res.pipe(f);
+      f.on('finish', () => f.close((err) => err ? cleanup(err) : resolve()));
+    });
+
+    req.on('timeout', () => req.destroy(new Error(`timeout fetching ${url}`)));
+    req.on('error', reject);
   });
 }
 
@@ -98,18 +113,29 @@ async function fetchWin() {
   const PY_URL  = `https://www.python.org/ftp/python/${PY_VER}/python-${PY_VER}-embed-amd64.zip`;
   const PY_ZIP  = path.join(OUT, 'python-embed.zip');
   const PY_EXE  = path.join(OUT, 'python.exe');
-  const PTH_FILE = path.join(OUT, 'python311._pth');
+  // Derived from PY_VER, not a literal: bumping PY_VER to 3.12 used to leave
+  // this pointing at python311._pth, and the existsSync guard below turned the
+  // resulting no-op `site` patch into a silent failure.
+  const PY_TAG   = PY_VER.split('.').slice(0, 2).join('');   // "3.11.9" -> "311"
+  const PTH_FILE = path.join(OUT, `python${PY_TAG}._pth`);
 
   if (!fs.existsSync(PY_EXE)) {
     console.log(`[fetch-runtimes] win: downloading Python ${PY_VER}`);
     await download(PY_URL, PY_ZIP);
     unzip(PY_ZIP, OUT);
     fs.unlinkSync(PY_ZIP);
-    if (fs.existsSync(PTH_FILE)) {
-      let c = fs.readFileSync(PTH_FILE, 'utf8');
-      if (c.includes('#import site')) {
-        fs.writeFileSync(PTH_FILE, c.replace('#import site', 'import site'));
-      }
+    // Fail loudly rather than shipping a runtime that cannot import site.
+    if (!fs.existsSync(PTH_FILE)) {
+      const found = fs.readdirSync(OUT).filter(n => n.endsWith('._pth'));
+      throw new Error(
+        `expected ${path.basename(PTH_FILE)} in the Python embed zip, found: ` +
+        `${found.join(', ') || '(none)'}. Update PY_VER handling in this script.`);
+    }
+    const c = fs.readFileSync(PTH_FILE, 'utf8');
+    if (c.includes('#import site')) {
+      fs.writeFileSync(PTH_FILE, c.replace('#import site', 'import site'));
+    } else if (!/^import site$/m.test(c)) {
+      throw new Error(`${path.basename(PTH_FILE)} has no 'import site' line to enable.`);
     }
   } else {
     console.log('[fetch-runtimes] win: Python already present');

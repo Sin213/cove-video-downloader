@@ -41,6 +41,11 @@ async function openPathExternal(target) {
 let mainWindow = null;
 let pyProc = null;        // Python backend child process
 let pyReady = false;      // flips true when tools_ready fires
+let isQuitting = false;      // app is quitting outright
+let backendStopping = false; // backend was stopped deliberately (incl. macOS)
+let pendingRestart = false;  // 'activate' arrived while a stop was still in flight
+let backendRestarts = 0;
+const MAX_BACKEND_RESTARTS = 3;
 // The backend emits the first few events (ready / tools_ready) within a few
 // hundred ms of spawn, which is often before the renderer has mounted React
 // and subscribed to cove:event. Events arriving before subscription are
@@ -48,12 +53,18 @@ let pyReady = false;      // flips true when tools_ready fires
 // renderer signals it's ready via cove:ready.
 let rendererReady = false;
 let eventBuffer = [];
+// If the renderer never signals ready (crash, load failure) the buffer would
+// otherwise grow for the life of the process.
+const EVENT_BUFFER_MAX = 500;
 
 function deliverEvent(event) {
   if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('cove:event', event);
   } else {
     eventBuffer.push(event);
+    if (eventBuffer.length > EVENT_BUFFER_MAX) {
+      eventBuffer.splice(0, eventBuffer.length - EVENT_BUFFER_MAX);
+    }
   }
 }
 
@@ -83,12 +94,60 @@ function resolveBackendCommand() {
     return { cmd: 'python', args: [script] };
   }
 
-  // macOS / Linux: system python3 always available (AppImage inherits user PATH)
-  return { cmd: 'python3', args: [script] };
+  // macOS / Linux: probe the usual interpreters instead of assuming `python3`.
+  // A clean macOS has no `python3` on PATH, and minimal Linux images often
+  // don't either - and spawn's ENOENT is async, so assuming one crashed the
+  // main process instead of reporting a missing dependency.
+  const candidates = [
+    'python3',
+    '/usr/bin/python3',
+    '/usr/local/bin/python3',
+    '/opt/homebrew/bin/python3',
+    'python',
+  ];
+  for (const cand of candidates) {
+    if (cand.includes(path.sep)) {
+      if (fs.existsSync(cand)) return { cmd: cand, args: [script] };
+    } else if (whichSync(cand)) {
+      return { cmd: cand, args: [script] };
+    }
+  }
+  return null;
+}
+
+// Minimal PATH lookup - avoids a dependency and keeps resolution synchronous
+// so spawnBackend can report a missing interpreter before it ever calls spawn.
+function whichSync(name) {
+  const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    const full = path.join(dir, name);
+    try {
+      fs.accessSync(full, fs.constants.X_OK);
+      return full;
+    } catch { /* keep looking */ }
+  }
+  return null;
+}
+
+const PY_MISSING_MSG =
+  'Python 3 was not found. Install Python 3.9 or newer and restart the app ' +
+  '(Linux: `sudo apt install python3`, macOS: `brew install python3`).';
+
+function reportBackendFailure(msg) {
+  pyProc = null;
+  pyReady = false;
+  deliverEvent({ type: 'log', tag: 'backend', tone: 'err', msg });
+  deliverEvent({ type: 'backend_down', msg });
 }
 
 function spawnBackend() {
-  const { cmd, args } = resolveBackendCommand();
+  const resolved = resolveBackendCommand();
+  if (!resolved) {
+    console.error('[cove] no Python interpreter found');
+    reportBackendFailure(PY_MISSING_MSG);
+    return;
+  }
+  const { cmd, args } = resolved;
   try {
     pyProc = spawn(cmd, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -106,8 +165,19 @@ function spawnBackend() {
     });
   } catch (err) {
     console.error('[cove] failed to spawn backend:', err);
+    reportBackendFailure(`Could not start the Python backend: ${err.message}`);
     return;
   }
+
+  // spawn() reports ENOENT asynchronously via 'error', not by throwing. With no
+  // handler Node re-throws it as an uncaught exception and the app dies with no
+  // message, which is exactly what a missing `python3` used to do.
+  pyProc.on('error', (err) => {
+    console.error('[cove] backend spawn error:', err);
+    reportBackendFailure(
+      err.code === 'ENOENT' ? PY_MISSING_MSG
+                            : `Python backend error: ${err.message}`);
+  });
 
   const rl = readline.createInterface({ input: pyProc.stdout, crlfDelay: Infinity });
   rl.on('line', (line) => {
@@ -128,6 +198,31 @@ function spawnBackend() {
     console.warn(`[cove] backend exited (code=${code}, sig=${sig})`);
     pyProc = null;
     pyReady = false;
+    if (isQuitting) return;
+    if (backendStopping) {
+      backendStopping = false;
+      // An 'activate' landed mid-stop and asked for the backend back.
+      if (pendingRestart) {
+        pendingRestart = false;
+        backendRestarts = 0;
+        spawnBackend();
+      }
+      return;
+    }
+
+    // Unexpected death. Restart once with backoff, then tell the renderer so
+    // it can unstick the queue instead of showing "fetching" forever.
+    if (backendRestarts < MAX_BACKEND_RESTARTS) {
+      backendRestarts += 1;
+      deliverEvent({
+        type: 'log', tag: 'backend', tone: 'warn',
+        msg: `Backend stopped unexpectedly - restarting (${backendRestarts}/${MAX_BACKEND_RESTARTS})...`,
+      });
+      setTimeout(() => { if (!isQuitting && !pyProc) spawnBackend(); }, 500 * backendRestarts);
+    } else {
+      reportBackendFailure(
+        'The Python backend stopped and could not be restarted. Restart the app.');
+    }
   });
 }
 
@@ -188,23 +283,60 @@ app.whenReady().then(() => {
   spawnBackend();
   createWindow();
   app.on('activate', () => {
+    // Reopening from the dock must bring the backend back too: window-all-closed
+    // kills it on darwin, and without this the restored window had no tool
+    // versions, no downloads and no search.
+    // A stop may still be in flight: shutdownBackend() has signalled the child
+    // but its 'exit' has not fired yet, so pyProc is still truthy. Spawning
+    // now would be skipped and the exit handler would then consume
+    // backendStopping and suppress the restart, leaving the window backendless.
+    // Flag the intent instead and let the exit handler honour it.
+    if (backendStopping && pyProc) {
+      pendingRestart = true;
+    } else if (!pyProc) {
+      backendRestarts = 0; backendStopping = false; spawnBackend();
+    }
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
+// Ask the backend to shut down cleanly. Closing stdin makes it drop out of its
+// read loop and kill its own yt-dlp / HandBrakeCLI children; a bare kill() only
+// signals Python and leaves those grandchildren running. SIGKILL is a backstop
+// if it does not exit in time.
+function shutdownBackend() {
+  const proc = pyProc;
+  if (!proc || proc.killed) return;
+  // Mark the stop as deliberate *before* signalling, so the exit handler does
+  // not classify it as an unexpected death and respawn what we just killed.
+  backendStopping = true;
+  try { proc.stdin.end(); } catch {}
+  try { proc.kill('SIGTERM'); } catch {}
+  const t = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 3000);
+  if (typeof t.unref === 'function') t.unref();
+}
+
 app.on('window-all-closed', () => {
-  if (pyProc && !pyProc.killed) {
-    try { pyProc.stdin.end(); } catch {}
-    try { pyProc.kill(); } catch {}
+  // Any restart requested by a previous 'activate' is void now that no window
+  // exists. Without this, a window opened and closed during an in-flight stop
+  // leaves pendingRestart set and the exit handler spawns a backend for a UI
+  // that is no longer there.
+  pendingRestart = false;
+  if (process.platform !== 'darwin') {
+    isQuitting = true;
+    shutdownBackend();
+    app.quit();
+  } else {
+    // macOS keeps the app alive with no windows. The backend is stopped to free
+    // resources and respawned from 'activate'; it must NOT be auto-restarted
+    // here, or closing the last window immediately resurrects it.
+    shutdownBackend();
   }
-  if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {
-  if (pyProc && !pyProc.killed) {
-    try { pyProc.stdin.end(); } catch {}
-    try { pyProc.kill(); } catch {}
-  }
+  isQuitting = true;
+  shutdownBackend();
 });
 
 // ───────────────────────────── Settings persistence ──────────────────────
@@ -248,8 +380,21 @@ ipcMain.handle('cove:folder:browse', async (_, initialPath) => {
   if (res.canceled || !res.filePaths.length) return null;
   return res.filePaths[0];
 });
+// The save path is a free-text field, so whatever the renderer sends could be
+// a typo, a URL, or a non-directory. Hand only a real, existing directory to
+// the desktop handler.
 ipcMain.handle('cove:folder:open', async (_, folderPath) => {
-  try { await openPathExternal(folderPath); } catch {}
+  if (typeof folderPath !== 'string' || !folderPath.trim()) return 'No folder set.';
+  const resolved = path.resolve(folderPath);
+  let st;
+  try {
+    st = fs.statSync(resolved);
+  } catch {
+    return 'That folder does not exist yet.';
+  }
+  if (!st.isDirectory()) return 'That path is not a folder.';
+  try { await openPathExternal(resolved); } catch { return 'Could not open that folder.'; }
+  return '';
 });
 
 // Cookies file picker (Netscape cookies.txt exported from a browser extension).

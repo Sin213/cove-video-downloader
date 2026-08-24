@@ -23,9 +23,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -38,7 +40,24 @@ if _HERE not in sys.path:
 
 from ssl_context import get_ssl_context
 
-__version__ = "2.4.0"
+def _read_version():
+    """Single source of truth: package.json. Falls back only if unreadable
+    (e.g. backend.py run standalone from a checkout without the app)."""
+    for cand in (
+        os.path.join(_HERE, "..", "package.json"),
+        os.path.join(_HERE, "..", "..", "package.json"),
+        os.path.join(_HERE, "..", "..", "app.asar", "package.json"),
+    ):
+        try:
+            with open(cand, "r", encoding="utf-8") as f:
+                v = json.load(f).get("version")
+            if v:
+                return str(v)
+        except Exception:
+            continue
+    return "0.0.0"
+
+__version__ = _read_version()
 
 
 # ── stdout/stderr helpers ──────────────────────────────────────────────────
@@ -145,15 +164,32 @@ def _download_to(url, dest):
 # which matches what downsub.com and similar tools produce.
 _SRT_TS_RE = re.compile(r"(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})")
 
+def _is_seq_number(lines, i):
+    """True if lines[i] is an SRT sequence number rather than caption text.
+
+    A sequence number is a digit-only line whose next non-empty line is a
+    timestamp. Checking the lookahead (instead of `s.isdigit()` alone) keeps
+    captions that are themselves numbers - "2024", "911" - out of the bin.
+    """
+    if not lines[i].strip().isdigit():
+        return False
+    for nxt in lines[i + 1:]:
+        s = nxt.strip()
+        if not s:
+            continue
+        return bool(_SRT_TS_RE.match(s))
+    return False
+
 def _parse_srt(text):
     cues, cur = [], None
-    for line in text.splitlines():
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
         s = line.strip()
         m = _SRT_TS_RE.match(s)
         if m:
             if cur: cues.append(cur)
             cur = {"start": m.group(1), "end": m.group(2), "lines": []}
-        elif cur is not None and s and not s.isdigit():
+        elif cur is not None and s and not _is_seq_number(lines, i):
             cur["lines"].append(s)
     if cur: cues.append(cur)
     return cues
@@ -198,6 +234,56 @@ def _render_vtt(cues):
 
 def _render_txt(cues):
     return "\n".join(c["text"] for c in cues) + "\n"
+
+
+# ── progress parsing ───────────────────────────────────────────────────────
+# Percentage and speed are matched separately: yt-dlp omits the speed on the
+# terminal "100% ... in 00:03" line and prints "Unknown B/s" while it is still
+# probing, and a single combined pattern silently drops both cases.
+_DL_PCT_RE   = re.compile(r"(\d+(?:\.\d+)?)%")
+_DL_SPEED_RE = re.compile(r"at\s+(\d+(?:\.\d+)?\s*[KMGT]?i?B/s)")
+_HB_PCT_RE   = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+
+def _parse_dl_progress(line):
+    """Parse a yt-dlp progress line -> (pct, speed) or None.
+
+    `speed` is "" when yt-dlp did not report one (unknown, or the final line).
+    """
+    if "%" not in line:
+        return None
+    m = _DL_PCT_RE.search(line)
+    if not m:
+        return None
+    speed = _DL_SPEED_RE.search(line)
+    return float(m.group(1)), (speed.group(1).strip() if speed else "")
+
+def _parse_hb_progress(line):
+    """Parse a HandBrakeCLI progress line -> pct or None."""
+    if "%" not in line:
+        return None
+    m = _HB_PCT_RE.search(line)
+    return float(m.group(1)) if m else None
+
+
+def _pick_fallback_file(output_dir, pattern, started_at):
+    """Newest file in `output_dir` matching `pattern` that this run created.
+
+    Files modified before `started_at` are ignored: without that bound the
+    glob can select a pre-existing user file, report it as the download, and
+    (with compression on) overwrite it. Returns None when nothing qualifies.
+    """
+    candidates = []
+    for p in Path(output_dir).glob(pattern):
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            continue
+        # 1s of slack absorbs filesystem mtime granularity.
+        if mtime >= started_at - 1:
+            candidates.append((mtime, str(p)))
+    if not candidates:
+        return None
+    return max(candidates)[1]
 
 def _postprocess_subs(srt_path, final_fmt):
     """Read yt-dlp's raw SRT, dedupe, write to final format. Returns the
@@ -263,7 +349,7 @@ def _browser_cookie_globs(browser):
         "edge":     [config / "microsoft-edge/Default/Cookies"],
     }.get(browser, [])
 
-def detect_browser_cookies(ytdlp_bin):
+def detect_browser_cookies():
     log("cookies", "Detecting browser cookies...", "dim")
     try:
         for browser in BROWSERS:
@@ -284,6 +370,105 @@ def detect_browser_cookies(ytdlp_bin):
 _cancel = threading.Event()
 _busy   = False
 _busy_lock = threading.Lock()
+
+# Live yt-dlp / HandBrakeCLI children, tagged by what spawned them. The
+# Electron main process only ever signals *this* script, so without an explicit
+# registry a quit leaves the grandchildren running - still writing files and
+# burning bandwidth.
+#
+# Entries are (proc, kind) with kind in {"download", "search"}.
+_children = set()
+# Reentrant: cancel_download runs on the main thread and holds this lock, and a
+# SIGTERM arriving in that window re-enters _kill_children on the *same* thread.
+# A plain Lock self-deadlocks there.
+_children_lock = threading.RLock()
+
+# Process-teardown signal, deliberately distinct from _cancel. _cancel means
+# "the user pressed Stop" and stays set until the next start_download, so using
+# it to refuse registration killed every subsequent search.
+_shutdown = threading.Event()
+
+def _register_child(proc, kind="download"):
+    """Track a child, or kill it outright if it is already obsolete.
+
+    Two independent reasons to refuse, and both are needed:
+
+    * `_shutdown` - the process is tearing down; nothing may start.
+    * `_cancel` for a *download* child - the worker checks `_cancel` before
+      spawning, so Stop can land in the window between that check and the
+      spawn. `_kill_children` would then sweep an empty set and the new child
+      would register unopposed. A silent yt-dlp emits no lines, so the read
+      loop's per-line `_cancel` check never runs and it blocks indefinitely.
+      Searches are deliberately exempt: `_cancel` stays set until the next
+      `start_download`, so honouring it there would kill every later search.
+
+    The check and the insert share one lock, so a child spawned just after
+    `_kill_children` snapshotted cannot slip through untracked. A refused child
+    is killed *and reaped* outside the lock: killing without waiting leaves a
+    zombie, and on Windows the process still holds its output file open, so a
+    caller deleting that file immediately would hit a PermissionError.
+    """
+    with _children_lock:
+        refuse = _shutdown.is_set() or (kind == "download" and _cancel.is_set())
+        if not refuse:
+            _children.add((proc, kind))
+    if refuse:
+        _kill_and_reap(proc)
+        return False
+    return True
+
+def _kill_and_reap(proc):
+    """SIGKILL a process and wait for it, so no zombie is left behind and its
+    file handles are released before the caller touches those files."""
+    try:
+        proc.kill()
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass
+
+def _unregister_child(proc):
+    with _children_lock:
+        for entry in list(_children):
+            if entry[0] is proc:
+                _children.discard(entry)
+
+def _kill_children(kind=None):
+    """Terminate live children, escalating to SIGKILL after a grace period.
+
+    `kind` limits the sweep - Stop should not tear down an unrelated search.
+    """
+    with _children_lock:
+        entries = [e for e in _children if kind is None or e[1] == kind]
+        # Discard only what we snapshotted. Anything registered after this
+        # point is handled by the _shutdown guard in _register_child.
+        for e in entries:
+            _children.discard(e)
+    procs = [e[0] for e in entries]
+    for p in procs:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+    for p in procs:
+        try:
+            p.wait(timeout=5)
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
+
+def _ytdlp_available():
+    """True when a real yt-dlp binary is resolvable (not the bare-name fallback)."""
+    return os.path.isfile(get_tool("yt-dlp")) or YTDLP_EXE.exists()
+
+# Set once the startup tool probe/update has settled. Downloads and searches
+# started before that would call Popen on the bare name "yt-dlp" and surface a
+# raw "[Errno 2] No such file or directory" on a fresh install.
+_tools_ready = threading.Event()
 
 def _run_ytdlp_check():
     """Probe tools + auto-update yt-dlp.
@@ -334,10 +519,27 @@ def _run_ytdlp_check():
             log("ready", "Ready (update check failed).", "ok")
         else:
             log("yt-dlp", "yt-dlp not found - check internet.", "err")
+    finally:
+        # Set even on failure: _ytdlp_available() is the real gate, and leaving
+        # this clear would wedge the UI permanently when GitHub is unreachable
+        # but a usable yt-dlp is already on disk.
+        _tools_ready.set()
 
 def _run_download(params):
     global _busy
     try:
+        if not _tools_ready.is_set() or not _ytdlp_available():
+            msg = ("yt-dlp is still being installed - wait for "
+                   "\"Ready\" in the log, then try again.")
+            log("dl", msg, "warn")
+            for item in (params.get("urls") or []):
+                item_id = item.get("id") if isinstance(item, dict) else None
+                if item_id:
+                    emit({"type": "item_state", "id": item_id,
+                          "state": "error", "err": msg})
+            emit({"type": "download_complete", "success": 0,
+                  "fail": len(params.get("urls") or [])})
+            return
         urls       = params.get("urls") or []
         quality    = params.get("quality", "Best")
         compress   = bool(params.get("compress", False))
@@ -405,7 +607,7 @@ def _run_download(params):
         if cookies_mode == "none":
             log("cookies", "Cookies disabled.", "dim")
         elif cookies_mode == "auto" or cookies_mode == "":
-            cookies_browser = detect_browser_cookies(ytdlp_bin)
+            cookies_browser = detect_browser_cookies()
         elif cookies_mode in BROWSERS:
             cookies_browser = cookies_mode
             log("cookies", f"Using {cookies_mode} cookies.", "ok")
@@ -505,10 +707,17 @@ def _run_download(params):
                 cookie_read_error = False   # browser cookie DB unreadable
                 bot_check_error   = False   # YouTube "sign in to confirm..."
                 returncode        = 1
+                # Bounds the output-folder glob fallback below so it can only
+                # ever select a file this item actually produced.
+                item_started_at   = time.time()
 
                 for attempt_idx, ca in enumerate(attempts):
                     if attempt_idx > 0:
                         log("yt-dlp", "Extraction failed - retrying without cookies...", "warn")
+                    # Reset per attempt: a cookie-DB error on attempt 1 must not
+                    # explain an unrelated failure on the cookie-less retry.
+                    cookie_read_error = False
+                    bot_check_error   = False
                     # The android_vr/android clients dodge YouTube's bot check
                     # on public videos, but they must NOT be combined with a
                     # logged-in session. So the flag is decided per attempt off
@@ -528,6 +737,9 @@ def _run_download(params):
                         text=True, bufsize=1, creationflags=creationflags,
                         env=child_env,
                     )
+                    if not _register_child(proc, kind="download"):
+                        # Shutdown began mid-spawn; proc is already killed.
+                        break
                     downloaded_file = None
 
                     for line in proc.stdout:
@@ -536,10 +748,9 @@ def _run_download(params):
                             break
                         s = line.strip()
                         if "[download]" in s and "%" in s:
-                            m = re.search(r"(\d+\.?\d*)%.*?(\d+\.?\d+\s*\w+/s)", s)
-                            if m:
-                                pct   = float(m.group(1))
-                                speed = m.group(2)
+                            prog = _parse_dl_progress(s)
+                            if prog:
+                                pct, speed = prog
                                 emit({"type": "item_state", "id": item_id,
                                       "state": "downloading", "pct": pct, "speed": speed})
                         if "[Merger] Merging formats into" in s:
@@ -587,9 +798,17 @@ def _run_download(params):
                             log("yt-dlp", s, "dim")
 
                     proc.wait()
+                    _unregister_child(proc)
                     returncode = proc.returncode
                     if returncode == 0 or _cancel.is_set():
                         break
+
+                # A user-initiated Stop terminates yt-dlp, so returncode is
+                # non-zero. That is a cancellation, not a failure: reporting it
+                # as one gave the user a red error row and "1 failed".
+                if _cancel.is_set():
+                    emit({"type": "item_state", "id": item_id, "state": "cancelled"})
+                    break
 
                 if returncode != 0:
                     fail += 1
@@ -613,12 +832,16 @@ def _run_download(params):
                         pattern = f"*.{sub_lang}*.{sub_fmt_ytdlp}"
                     else:
                         pattern = f"*.{video_fmt}"
-                    candidates = sorted(
-                        Path(output_dir).glob(pattern),
-                        key=lambda p: p.stat().st_mtime, reverse=True,
-                    )
-                    if candidates:
-                        downloaded_file = str(candidates[0])
+                    downloaded_file = _pick_fallback_file(
+                        output_dir, pattern, item_started_at)
+                    if downloaded_file is None:
+                        fail += 1
+                        msg = ("Download finished but the output file could not "
+                               "be located - see the log for details.")
+                        emit({"type": "item_state", "id": item_id,
+                              "state": "error", "err": msg})
+                        log("dl", msg, "err")
+                        continue
 
                 # Subs post-processing: dedupe YouTube's rolling auto-caption
                 # cues and render out to the user's chosen final format.
@@ -656,13 +879,45 @@ def _run_download(params):
                                 text=True, bufsize=1, creationflags=creationflags,
                                 env=child_env,
                             )
+                            if not _register_child(hb_proc, kind="download"):
+                                # hb_proc is already killed and reaped, so the
+                                # temp file is no longer held open. Follow the
+                                # same cleanup as an interrupted encode so the
+                                # row reads "stopped" rather than falling into
+                                # the generic handler as an unexpected error.
+                                try:
+                                    if os.path.exists(tmp_file):
+                                        os.remove(tmp_file)
+                                except OSError:
+                                    pass
+                                log("HandBrake",
+                                    "Compression cancelled. Original kept.", "warn")
+                                emit({"type": "item_state", "id": item_id,
+                                      "state": "cancelled"})
+                                break
                             for hb_line in hb_proc.stdout:
+                                if _cancel.is_set():
+                                    hb_proc.terminate()
+                                    break
                                 s = hb_line.replace("\r", "\n").strip()
-                                m = re.search(r"(\d+\.?\d+)\s*%", s)
-                                if m:
+                                pct = _parse_hb_progress(s)
+                                if pct is not None:
                                     emit({"type": "item_state", "id": item_id,
-                                          "state": "encoding", "pct": float(m.group(1))})
+                                          "state": "encoding", "pct": pct})
                             hb_proc.wait()
+                            _unregister_child(hb_proc)
+                            if _cancel.is_set():
+                                # Same Windows hazard: a terminated HandBrakeCLI
+                                # may still hold the temp file briefly.
+                                try:
+                                    if os.path.exists(tmp_file):
+                                        os.remove(tmp_file)
+                                except OSError:
+                                    pass
+                                log("HandBrake", "Compression cancelled. Original kept.", "warn")
+                                emit({"type": "item_state", "id": item_id,
+                                      "state": "cancelled"})
+                                break
                             if hb_proc.returncode == 0:
                                 new_sz = os.path.getsize(tmp_file)
                                 new_mb = new_sz / (1024 * 1024)
@@ -703,9 +958,13 @@ def _run_download(params):
 _SEARCH_PAGE_SIZE = 10
 _search_lock = threading.Lock()
 _search_proc = None
+# Monotonic ticket. Each search claims one; only the newest claimant is allowed
+# to emit. Without it a slow page N-1 still sitting in communicate() can land
+# after page N and repaint the pager with stale rows.
+_search_seq  = 0
 
 def _run_search(params):
-    global _search_proc
+    global _search_proc, _search_seq
     query = (params.get("query") or "").strip()
     try:
         start = max(1, int(params.get("start") or 1))
@@ -715,13 +974,35 @@ def _run_search(params):
         emit({"type": "search_results", "query": query, "start": start,
               "has_more": False, "results": []})
         return
-    try:
+
+    with _search_lock:
+        _search_seq += 1
+        my_seq = _search_seq
+        if _search_proc and _search_proc.poll() is None:
+            try:
+                _search_proc.terminate()
+            except Exception:
+                pass
+
+    def _is_current():
         with _search_lock:
-            if _search_proc and _search_proc.poll() is None:
-                try:
-                    _search_proc.terminate()
-                except Exception:
-                    pass
+            return my_seq == _search_seq
+
+    def _emit_results(results, has_more):
+        # The generation check and the emit are done under one lock: checking
+        # first and emitting after leaves a window where a newer search claims
+        # the generation in between, and the stale payload still goes out.
+        with _search_lock:
+            if my_seq != _search_seq:
+                return
+            emit({"type": "search_results", "query": query, "start": start,
+                  "has_more": has_more, "results": results})
+
+    try:
+        if not _tools_ready.is_set():
+            log("search", "Still preparing yt-dlp - try again in a moment.", "warn")
+            _emit_results([], False)
+            return
         ytdlp = get_tool("yt-dlp")
         url = f"https://www.youtube.com/results?search_query={urllib.parse.quote_plus(query)}"
         # Fetch one extra to reliably detect whether there are more results,
@@ -734,18 +1015,51 @@ def _run_search(params):
             stdin=subprocess.DEVNULL, text=True,
             creationflags=(subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0),
         )
+        # Claim the slot only if this thread still owns the newest generation.
+        # A slower thread reaching this point after a newer search started
+        # would otherwise overwrite the newer handle, so the next terminate()
+        # would target the wrong process and leave the real one running.
         with _search_lock:
+            if my_seq != _search_seq:
+                p.kill()
+                p.communicate()
+                return
             _search_proc = p
-        stdout, stderr = p.communicate(timeout=60)
-        with _search_lock:
-            if _search_proc is p:
-                _search_proc = None
+        if not _register_child(p, kind="search"):
+            # Process teardown began while we were spawning; p is already killed.
+            return
+        try:
+            stdout, stderr = p.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            # communicate() does NOT kill the child on timeout; without this the
+            # yt-dlp process outlives the search and _search_proc points at a
+            # stale handle the next search would try to terminate.
+            p.kill()
+            p.communicate()
+            # Only the current search may speak: a superseded thread timing out
+            # would otherwise print an error about a search the user abandoned.
+            # Check and log under one lock - releasing _search_lock first lets a
+            # newer search start in between and receive the stale warning. Lock
+            # order here is _search_lock -> _out_lock, matching _emit_results;
+            # there is no path that takes them in the reverse order.
+            with _search_lock:
+                if my_seq == _search_seq:
+                    log("search", "Search timed out after 60s.", "err")
+            _emit_results([], False)
+            return
+        finally:
+            _unregister_child(p)
+            with _search_lock:
+                if _search_proc is p:
+                    _search_proc = None
         if p.returncode != 0:
-            err_msg = (stderr or "").strip().splitlines()
-            err_short = err_msg[-1] if err_msg else "unknown error"
-            log("search", f"yt-dlp search failed (exit {p.returncode}): {err_short}", "err")
-            emit({"type": "search_results", "query": query, "start": start,
-                  "has_more": False, "results": []})
+            # A terminate() from a newer search lands here; that is not an error
+            # worth showing, and _emit_results already suppresses the payload.
+            if _is_current():
+                err_msg = (stderr or "").strip().splitlines()
+                err_short = err_msg[-1] if err_msg else "unknown error"
+                log("search", f"yt-dlp search failed (exit {p.returncode}): {err_short}", "err")
+            _emit_results([], False)
             return
         results = []
         for line in stdout.splitlines():
@@ -769,12 +1083,11 @@ def _run_search(params):
             })
         has_more = len(results) > _SEARCH_PAGE_SIZE
         results = results[:_SEARCH_PAGE_SIZE]
-        emit({"type": "search_results", "query": query, "start": start,
-              "has_more": has_more, "results": results})
+        _emit_results(results, has_more)
     except Exception as e:
-        log("search", f"Search error: {e}", "err")
-        emit({"type": "search_results", "query": query, "start": start,
-              "has_more": False, "results": []})
+        if _is_current():
+            log("search", f"Search error: {e}", "err")
+        _emit_results([], False)
 
 
 # ── command dispatcher (stdin reader loop) ────────────────────────────────
@@ -794,6 +1107,11 @@ def handle_command(cmd_obj):
 
     elif cmd == "cancel_download":
         _cancel.set()
+        # The read loops only notice _cancel between lines, and a stalled
+        # yt-dlp or a long HandBrake pass may not emit one for minutes.
+        # Terminating here makes Stop take effect immediately. Scoped to
+        # download children so an in-flight search is left alone.
+        _kill_children(kind="download")
 
     elif cmd == "search":
         threading.Thread(target=_run_search, args=(cmd_obj.get("params") or {},),
@@ -812,24 +1130,46 @@ def main():
     except Exception:
         pass
 
+    # Electron sends SIGTERM on quit. Without a handler the interpreter dies
+    # while yt-dlp / HandBrakeCLI keep running as orphans.
+    def _on_signal(signum, frame):
+        _shutdown.set()
+        _cancel.set()
+        _kill_children()
+        sys.exit(0)
+
+    for _sig in ("SIGTERM", "SIGINT", "SIGHUP"):
+        s = getattr(signal, _sig, None)
+        if s is not None:
+            try:
+                signal.signal(s, _on_signal)
+            except (ValueError, OSError):
+                pass
+
     emit({"type": "ready", "version": __version__})
 
     # Kick off yt-dlp check immediately.
     threading.Thread(target=_run_ytdlp_check, daemon=True).start()
 
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except Exception as e:
-            log("backend", f"bad command line: {e}", "err")
-            continue
-        try:
-            handle_command(obj)
-        except Exception as e:
-            log("backend", f"command {obj.get('cmd')} failed: {e}", "err")
+    try:
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception as e:
+                log("backend", f"bad command line: {e}", "err")
+                continue
+            try:
+                handle_command(obj)
+            except Exception as e:
+                log("backend", f"command {obj.get('cmd')} failed: {e}", "err")
+    finally:
+        # stdin EOF means Electron closed the pipe - i.e. the app is quitting.
+        _shutdown.set()
+        _cancel.set()
+        _kill_children()
 
 
 if __name__ == "__main__":

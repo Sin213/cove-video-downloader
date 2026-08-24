@@ -10,15 +10,26 @@
   "license": "MIT",
   "homepage": "https://github.com/Sin213/cove-video-downloader",
   "scripts": {
+    "test": "python3 -m pytest tests/ -q",
+    "vendor": "node scripts/vendor-assets.js",
+    "prestart": "node scripts/vendor-assets.js",
     "start": "electron .",
+    "predist": "node scripts/vendor-assets.js",
     "dist": "electron-builder",
+    "predist:linux": "node scripts/vendor-assets.js",
     "dist:linux": "node scripts/fetch-runtimes.js linux && electron-builder --linux",
+    "predist:win": "node scripts/vendor-assets.js",
     "dist:win": "node scripts/fetch-runtimes.js win && electron-builder --win",
+    "prerelease": "node scripts/vendor-assets.js",
     "release": "node scripts/fetch-runtimes.js linux && node scripts/fetch-runtimes.js win && electron-builder --linux --win --publish=always"
   },
   "devDependencies": {
+    "@babel/standalone": "^7.29.0",
     "electron": "^33.2.0",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "geist": "^1.7.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "build": {
     "appId": "com.sin.cove-video-downloader",
@@ -67,7 +78,18 @@
       "artifactName": "Cove-Video-Downloader-${version}-${arch}.AppImage"
     },
     "deb": {
-      "artifactName": "Cove-Video-Downloader-${version}-${arch}.deb"
+      "artifactName": "Cove-Video-Downloader-${version}-${arch}.deb",
+      "depends": [
+        "python3",
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libsecret-1-0"
+      ]
     },
     "win": {
       "target": [

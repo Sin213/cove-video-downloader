@@ -4,9 +4,19 @@
   <meta charset="utf-8" />
   <title>Cove Video Downloader</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Everything the renderer needs ships in the package. The only remote
+       origin left is i.ytimg.com for search thumbnails, which degrades to a
+       broken image rather than a blank app when offline. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none';
+                 script-src 'self' 'unsafe-inline' 'unsafe-eval';
+                 style-src 'self' 'unsafe-inline';
+                 font-src 'self';
+                 img-src 'self' data: https://i.ytimg.com;
+                 connect-src 'self';
+                 base-uri 'none';
+                 form-action 'none';">
+  <link rel="stylesheet" href="vendor/fonts/geist.css">
   <link rel="stylesheet" href="fonts/fonts.css">
   <style>
     :root {
@@ -179,9 +189,12 @@
 <body>
   <div id="root"></div>
 
-  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin="anonymous" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"></script>
-  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"></script>
-  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y"></script>
+  <!-- Vendored by scripts/vendor-assets.js from the pinned devDependencies.
+       These were unpkg.com <script src> tags, so the app could not draw its
+       own UI without a working network path to a third party. -->
+  <script src="vendor/react.production.min.js"></script>
+  <script src="vendor/react-dom.production.min.js"></script>
+  <script src="vendor/babel.min.js"></script>
 
   <script type="text/babel">
 
@@ -491,7 +504,10 @@ const fmtBytes = (n) => {
 
 const fmtDuration = (sec) => {
   if (!sec) return "";
-  const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+  // Round to whole seconds first: rounding the remainder independently turns
+  // 59.7s into "0:60".
+  const total = Math.round(sec);
+  const m = Math.floor(total / 60), s = total % 60;
   return m >= 60
     ? `${Math.floor(m/60)}:${String(m%60).padStart(2,"0")}:${String(s).padStart(2,"0")}`
     : `${m}:${String(s).padStart(2,"0")}`;
@@ -615,6 +631,7 @@ function LinkRow({ item, onRemove, onRedownload }) {
     state === "done"       ? "var(--accent)" :
     state === "error"      ? "var(--danger)" :
     state === "encoding"   ? "var(--warn)"   :
+    state === "cancelled"  ? "var(--text-3)" :
     state === "downloading"|| state === "fetching" ? "var(--info)" : "var(--text-3)";
   const statusText =
     state === "idle"         ? "queued" :
@@ -622,6 +639,7 @@ function LinkRow({ item, onRemove, onRedownload }) {
     state === "downloading"  ? `${(item.pct||0).toFixed(0)}%${item.speed ? " · "+item.speed : ""}` :
     state === "encoding"     ? `h.265 · ${(item.pct||0).toFixed(0)}%` :
     state === "done"         ? `done${item.size ? " · "+fmtBytes(item.size) : ""}` :
+    state === "cancelled"    ? "stopped" :
     state === "error"        ? (item.err || "error") : "";
   return (
     <div
@@ -681,7 +699,10 @@ function CoveDownloader() {
   const [compress,    setCompress]    = React.useState(false);
   const [running,     setRunning]     = React.useState(false);
   const [draft,       setDraft]       = React.useState("");
-  const [version,     setVersion]     = React.useState("v3.1.2");
+  // Seeded empty on purpose: the real value comes from cove:init, which reads
+  // app.getVersion() (i.e. package.json). A hardcoded seed here just gave the
+  // footer a third, independently stale source of truth.
+  const [version,     setVersion]     = React.useState("");
   const [videoCodec,  setVideoCodec]  = React.useState("auto");
   // Cookies source: "auto"/"firefox"/"chrome"/"brave"/"chromium"/"edge"/"none"
   // or an absolute path to a Netscape cookies.txt file.
@@ -698,6 +719,8 @@ function CoveDownloader() {
   const [searchStart,    setSearchStart]    = React.useState(1);
   const [hasMoreResults, setHasMoreResults] = React.useState(false);
   const lastSearchRef = React.useRef("");
+  // Mirrors searchStart for the event handler, which closes over stale state.
+  const searchStartRef = React.useRef(1);
   const [tools, setTools] = React.useState([
     { name: "yt-dlp",    v: "…", ok: null },
     { name: "ffmpeg",    v: "…", ok: null },
@@ -721,8 +744,16 @@ function CoveDownloader() {
     setItems(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i));
   }, []);
 
+  // A long playlist emits tens of thousands of yt-dlp stdout lines. Keeping
+  // them all meant an unbounded array copy per line plus a full re-render of
+  // the list, so memory and CPU degraded over a session.
+  const LOG_MAX = 2000;
   const pushLog = React.useCallback((entry) => {
-    setLog(l => [...l, { t: now(), ...entry }]);
+    setLog(l => {
+      const next = l.length >= LOG_MAX ? l.slice(l.length - LOG_MAX + 1) : l.slice();
+      next.push({ t: now(), ...entry });
+      return next;
+    });
   }, []);
 
   React.useEffect(() => {
@@ -735,8 +766,8 @@ function CoveDownloader() {
     const boot = async () => {
       if (!API()) {
         // ── Preview / demo mode (no Electron backend present) ──
-        setVersion("v3.1.0");
-        setSavePath("/home/sin/Downloads");
+        setVersion("");
+        setSavePath("~/Downloads");
         setItems([
           { id: uid(), url: "https://www.youtube.com/watch?v=bd-MRcTbx7k", state: "done", pct: 100, speed: "", size: 48_300_000 },
           { id: uid(), url: "https://x.com/acdmma_/status/2040645529525186626", state: "downloading", pct: 62, speed: "4.8 MB/s", size: 0 },
@@ -750,7 +781,7 @@ function CoveDownloader() {
           { name: "HandBrake", v: "-",          ok: true },
         ]);
         setLog([
-          { t: "15:52:54", tag: "tools",  tone: "dim",  msg: "yt-dlp → /home/sin/.cove-video-downloader/yt-dlp" },
+          { t: "15:52:54", tag: "tools",  tone: "dim",  msg: "yt-dlp → ~/.cove-video-downloader/yt-dlp" },
           { t: "15:52:54", tag: "tools",  tone: "dim",  msg: "ffmpeg → resources/runtime/ffmpeg" },
           { t: "15:52:54", tag: "yt-dlp", tone: "ok",   msg: "2026.03.17 already up to date." },
           { t: "15:52:54", tag: "ready",  tone: "ok",   msg: "Ready. Paste links above to begin." },
@@ -824,11 +855,26 @@ function CoveDownloader() {
             ]);
             break;
           case "search_results":
-            if (event.query === lastSearchRef.current) {
+            // Match the page as well as the query: paging quickly through the
+            // same query otherwise let an older page repaint a newer one.
+            if (event.query === lastSearchRef.current
+                && (event.start == null || event.start === searchStartRef.current)) {
               setSearchResults(event.results || []);
               setHasMoreResults(event.has_more || false);
               setSearching(false);
             }
+            break;
+          case "backend_down":
+            // The Python backend died and could not be restarted. Without this
+            // the queue sat on "fetching" forever with no explanation.
+            setRunning(false);
+            setSearching(false);
+            setTools(t => t.map(x => ({ ...x, v: "-", ok: false })));
+            setItems(prev => prev.map(it =>
+              (it.state === "fetching" || it.state === "downloading" || it.state === "encoding")
+                ? { ...it, state: "error", err: event.msg, pct: 0, speed: "" }
+                : it
+            ));
             break;
         }
       });
@@ -841,18 +887,27 @@ function CoveDownloader() {
   }, [updateItem, pushLog]);
 
   // ── Settings persistence (Smart Mode) ──────────────────────────────────
-  const saveTimer = React.useRef(null);
+  // The payload lives in a ref so the debounce can depend on a *signature*
+  // rather than on `items` itself. Depending on `items` re-armed the 500 ms
+  // timer on every progress event - several times a second - so it never
+  // fired for the whole duration of a download and a crash lost the queue.
+  const persistRef = React.useRef(null);
+  persistRef.current = {
+    savePath, quality, videoFormat, videoCodec, audioFormat,
+    subFormat, subLang, cookiesMode, cookiesFile, compress, proxyUrl,
+    queue: items.map(it => ({ id: it.id, url: it.url, state: it.state, size: it.size || 0 })),
+  };
+  // Deliberately excludes pct and speed: those churn constantly and are not
+  // persisted anyway.
+  const queueSig = items.map(it => `${it.id}|${it.url}|${it.state}|${it.size || 0}`).join("~");
+
   React.useEffect(() => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
+    const t = setTimeout(() => {
       if (!API()?.settings?.save) return;
-      API().settings.save({
-        savePath, quality, videoFormat, videoCodec, audioFormat,
-        subFormat, subLang, cookiesMode, cookiesFile, compress, proxyUrl,
-        queue: items.map(it => ({ id: it.id, url: it.url, state: it.state, size: it.size || 0 })),
-      });
+      try { API().settings.save(persistRef.current); } catch {}
     }, 500);
-  }, [savePath, quality, videoFormat, videoCodec, audioFormat, subFormat, subLang, cookiesMode, cookiesFile, compress, proxyUrl, items]);
+    return () => clearTimeout(t);
+  }, [savePath, quality, videoFormat, videoCodec, audioFormat, subFormat, subLang, cookiesMode, cookiesFile, compress, proxyUrl, queueSig]);
 
   // ── Link management ───────────────────────────────────────────────────
   const addUrls = (text) => {
@@ -925,6 +980,7 @@ function CoveDownloader() {
     const q = searchQuery.trim();
     if (!q || searching || !API()) return;
     lastSearchRef.current = q;
+    searchStartRef.current = 1;
     setLastSearch(q);
     setSearchStart(1);
     setSelectedResult(null);
@@ -934,6 +990,7 @@ function CoveDownloader() {
   const goToPage = (start) => {
     const q = lastSearchRef.current;
     if (!q || searching || !API()) return;
+    searchStartRef.current = start;
     setSearchStart(start);
     setSelectedResult(null);
     _doSearch(q, start);
@@ -981,7 +1038,7 @@ function CoveDownloader() {
 
   // ── Download ──────────────────────────────────────────────────────────
   const runDownload = async () => {
-    const queue = items.filter(i => i.state === "idle" || i.state === "error");
+    const queue = items.filter(i => i.state === "idle" || i.state === "error" || i.state === "cancelled");
     if (!queue.length) {
       pushLog({ tag: "dl", tone: "warn", msg: "Nothing to download. Add links first." });
       return;
@@ -990,7 +1047,10 @@ function CoveDownloader() {
     setRunning(true);
     queue.forEach(item => updateItem(item.id, { state: "fetching", pct: 0 }));
     try {
-      await API().download.start({
+      // sendCommand returns false when the Python backend is gone. Discarding
+      // it left every row stuck on "fetching" forever, with Stop as the only
+      // control and Stop also a no-op.
+      const accepted = await API().download.start({
         urls:     queue.map(i => ({ id: i.id, url: i.url })),
         quality,
         compress,
@@ -1003,14 +1063,22 @@ function CoveDownloader() {
         cookies: cookiesMode === "file" ? (cookiesFile || "none") : cookiesMode,
         proxy: proxyUrl,
       });
+      if (accepted === false) {
+        const msg = "Backend is not running - restart the app and try again.";
+        pushLog({ tag: "dl", tone: "err", msg });
+        queue.forEach(item => updateItem(item.id, { state: "error", err: msg, pct: 0 }));
+        setRunning(false);
+        return;
+      }
       // running=false is set by the download_complete event from Python
     } catch (e) {
       pushLog({ tag: "dl", tone: "err", msg: String(e) });
+      queue.forEach(item => updateItem(item.id, { state: "error", err: String(e), pct: 0 }));
       setRunning(false);
     }
   };
 
-  const nothingQueued = items.filter(i => i.state === "idle" || i.state === "error").length === 0;
+  const nothingQueued = items.filter(i => i.state === "idle" || i.state === "error" || i.state === "cancelled").length === 0;
   const totalBytes    = items.reduce((s, i) => s + (i.size || 0), 0);
   const doneCount     = items.filter(i => i.state === "done").length;
 

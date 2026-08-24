@@ -8,6 +8,10 @@ release/
 # Fetched runtimes (ffmpeg, Python embed, HandBrakeCLI)
 runtimes/
 
+# Renderer vendor bundle - regenerated from node_modules by
+# scripts/vendor-assets.js (runs on prestart / predist).
+renderer/vendor/
+
 # Python backend
 __pycache__/
 *.pyc
