@@ -10,7 +10,9 @@
   "license": "MIT",
   "homepage": "https://github.com/Sin213/cove-video-downloader",
   "scripts": {
-    "test": "python3 -m pytest tests/ -q",
+    "test": "npm run test:py && npm run test:js",
+    "test:py": "python3 -m pytest tests/ -q",
+    "test:js": "node --test \"tests/js/*.test.js\"",
     "vendor": "node scripts/vendor-assets.js",
     "prestart": "node scripts/vendor-assets.js",
     "start": "electron .",

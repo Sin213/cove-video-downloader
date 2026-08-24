@@ -30,6 +30,36 @@ jobs:
       - name: Run backend unit tests
         run: python -m pytest tests/ -q
 
+      # Production scripts must keep working on the Node the build jobs use.
+      # The test job runs on 22 (see below), so without this nothing would
+      # exercise the shipped scripts under 20.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Smoke-check production scripts on Node 20
+        run: |
+          node --version
+          for f in main.js preload.js portable.js scripts/vendor-assets.js scripts/fetch-runtimes.js; do
+            node --check "$f"
+          done
+          node scripts/vendor-assets.js
+          test -f renderer/vendor/react.production.min.js
+          test -f renderer/vendor/fonts/geist.css
+
+      # Node 22: the test runner's glob support and the object form of
+      # mock.timers.enable({ apis: [...] }) both require >= 21.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run main-process lifecycle tests
+        run: node --test "tests/js/*.test.js"
+
       # A tag that disagrees with package.json ships artifacts whose filenames
       # do not match the release they are attached to.
       - name: Verify tag matches package.json version
