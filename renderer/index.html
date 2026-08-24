@@ -1535,30 +1535,48 @@ ReactDOM.createRoot(document.getElementById("root")).render(<CoveDownloader/>);
   <div class="edge-handle corner" data-edge="TopRight"></div>
   <div class="edge-handle corner" data-edge="BottomLeft"></div>
   <div class="resize-grip"></div>
+  <script src="resize-geometry.js"></script>
   <script>
     // 6px-wide edge handles + 8px corners. Resize + (for Left/Top) reposition
     // via window.resizeTo / moveTo. SE corner falls back to BottomRight.
     (function () {
+      // Mirror main.js minWidth / minHeight for the BrowserWindow.
+      var MIN_W = 900;
+      var MIN_H = 600;
       function startResize(edge, e) {
         e.preventDefault();
         var startX = e.screenX, startY = e.screenY;
         var startW = window.outerWidth, startH = window.outerHeight;
         var startWinX = window.screenX, startWinY = window.screenY;
+        var pendingFrame = false, frameId = 0, latest = null;
+        function applyLatest() {
+          if (!latest) return;
+          window.resizeTo(latest.w, latest.h);
+          if (latest.x !== startWinX || latest.y !== startWinY) {
+            window.moveTo(latest.x, latest.y);
+          }
+        }
         function onMove(e2) {
           var dx = e2.screenX - startX, dy = e2.screenY - startY;
-          var newW = startW, newH = startH, newX = startWinX, newY = startWinY;
-          if (edge.indexOf('Left')   !== -1) { newW = startW - dx; newX = startWinX - dx; }
-          if (edge.indexOf('Right')  !== -1) { newW = startW + dx; }
-          if (edge.indexOf('Top')    !== -1) { newH = startH - dy; newY = startWinY - dy; }
-          if (edge.indexOf('Bottom') !== -1) { newH = startH + dy; }
-          if (newW < 200) newW = 200;
-          if (newH < 150) newH = 150;
-          window.resizeTo(newW, newH);
-          if (newX !== startWinX || newY !== startWinY) window.moveTo(newX, newY);
+          latest = computeResize(edge, dx, dy,
+            { w: startW, h: startH, x: startWinX, y: startWinY },
+            { w: MIN_W, h: MIN_H });
+          if (!pendingFrame) {
+            pendingFrame = true;
+            frameId = requestAnimationFrame(function () {
+              pendingFrame = false;
+              frameId = 0;
+              applyLatest();
+            });
+          }
         }
         function onUp() {
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
+          if (pendingFrame && latest) applyLatest();
+          if (pendingFrame && frameId) cancelAnimationFrame(frameId);
+          pendingFrame = false;
+          frameId = 0;
         }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
