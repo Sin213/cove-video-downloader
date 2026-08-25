@@ -141,6 +141,31 @@ YTDLP_EXE   = TOOLS_DIR / ("yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
 def _ytdlp_current_tag():
     return YTDLP_VER_F.read_text().strip() if YTDLP_VER_F.exists() else ""
 
+def _active_ytdlp_is_managed():
+    """True when get_tool("yt-dlp") resolves to the TOOLS_DIR copy this
+    updater manages. Compares resolved absolute paths so a symlink or a
+    relative path does not produce a false negative."""
+    return os.path.realpath(get_tool("yt-dlp")) == os.path.realpath(str(YTDLP_EXE))
+
+def _active_ytdlp_is_external():
+    """True when get_tool("yt-dlp") resolved to a real RUNNABLE binary
+    outside the managed TOOLS_DIR copy (bundled, or found on PATH):
+    a regular file plus the executable bit where the platform has one.
+    get_tool's last resort returns the bare name ("yt-dlp", "yt-dlp.exe")
+    when nothing is installed anywhere; that string is not an actual file,
+    so it must NOT count as external - on a fresh install the updater has
+    to run so the first-time download still happens."""
+    tool = get_tool("yt-dlp")
+    return _is_usable_binary(tool) and not _active_ytdlp_is_managed()
+
+def _ytdlp_active_version():
+    """Version of the yt-dlp actually in use. The managed copy keeps using
+    the yt-dlp.version tag file - it holds the real release tag like
+    2026.08.20, which --version does not print. Anything else is probed."""
+    if _active_ytdlp_is_managed():
+        return _ytdlp_current_tag()
+    return get_tool_version([get_tool("yt-dlp"), "--version"])
+
 def _ytdlp_fetch_latest():
     req = urllib.request.Request(YTDLP_API, headers={"User-Agent": "CoveVideoDownloader"})
     with urllib.request.urlopen(req, timeout=10, context=get_ssl_context()) as r:
@@ -461,9 +486,19 @@ def _kill_children(kind=None):
             except Exception:
                 pass
 
+def _is_usable_binary(path):
+    """True when path is a runnable program: a regular file, plus the
+    executable bit on platforms that have one. .exists() alone also matches
+    directories and non-executable files, which are not usable."""
+    if not os.path.isfile(path):
+        return False
+    return sys.platform == "win32" or os.access(path, os.X_OK)
+
+
 def _ytdlp_available():
     """True when a real yt-dlp binary is resolvable (not the bare-name fallback)."""
-    return os.path.isfile(get_tool("yt-dlp")) or YTDLP_EXE.exists()
+    tool = get_tool("yt-dlp")
+    return _is_usable_binary(tool) or _is_usable_binary(YTDLP_EXE)
 
 # Set once the startup tool probe/update has settled. Downloads and searches
 # started before that would call Popen on the bare name "yt-dlp" and surface a
@@ -481,7 +516,7 @@ def _run_ytdlp_check():
     def _snapshot_and_emit():
         ffmpeg_ver = get_tool_version([get_tool("ffmpeg"), "-version"])
         hb_ver     = get_tool_version([get_tool("HandBrakeCLI"), "--version"])
-        ytdlp_tag  = _ytdlp_current_tag() or "-"
+        ytdlp_tag  = _ytdlp_active_version() or "-"
         emit({
             "type": "tools_ready",
             "ytdlp_tag":  ytdlp_tag,
@@ -495,13 +530,18 @@ def _run_ytdlp_check():
     _snapshot_and_emit()
 
     try:
+        if _active_ytdlp_is_external():
+            log("yt-dlp", f"Using yt-dlp from {get_tool('yt-dlp')} - "
+                          "skipping managed update.", "warn")
+            log("ready", "Ready. Paste links above to begin.", "ok")
+            return
         log("yt-dlp", "Checking for updates...", "dim")
         tag, url = _ytdlp_fetch_latest()
         current  = _ytdlp_current_tag()
-        if current == tag and YTDLP_EXE.exists():
+        if current == tag and _is_usable_binary(YTDLP_EXE):
             log("yt-dlp", f"{tag} already up to date.", "ok")
         else:
-            action = "Updating" if YTDLP_EXE.exists() else "Downloading"
+            action = "Updating" if _is_usable_binary(YTDLP_EXE) else "Downloading"
             log("yt-dlp", f"{action} {tag}...", "dim")
             tmp = YTDLP_EXE.with_suffix(".tmp")
             _download_to(url, tmp)
@@ -514,7 +554,7 @@ def _run_ytdlp_check():
         log("ready", "Ready. Paste links above to begin.", "ok")
     except Exception as e:
         log("yt-dlp", f"Auto-update failed: {e}", "err")
-        if YTDLP_EXE.exists():
+        if _is_usable_binary(YTDLP_EXE):
             log("yt-dlp", "Using existing version.", "warn")
             log("ready", "Ready (update check failed).", "ok")
         else:
@@ -524,6 +564,13 @@ def _run_ytdlp_check():
         # this clear would wedge the UI permanently when GitHub is unreachable
         # but a usable yt-dlp is already on disk.
         _tools_ready.set()
+
+def _sub_lang_selector(lang):
+    """Widen a bare language tag so YouTube auto-caption variants match.
+    yt-dlp anchors --sub-langs patterns at the start of the tag, so
+    en -> en.*,en covers the literal tag en plus regional and auto-caption
+    variants such as en-US and en-orig."""
+    return f"{lang}.*,{lang}"
 
 def _run_download(params):
     global _busy
@@ -642,7 +689,7 @@ def _run_download(params):
                         ytdlp_bin,
                         "--skip-download",
                         "--write-subs", "--write-auto-subs",
-                        "--sub-langs", sub_lang,
+                        "--sub-langs", _sub_lang_selector(sub_lang),
                         "--convert-subs", sub_fmt_ytdlp,
                         "-o", output_template,
                     ]

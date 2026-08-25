@@ -329,3 +329,308 @@ def test_kill_children_does_not_drop_child_registered_mid_shutdown():
             "late child accepted but dropped from registry"
     else:
         assert late.killed, "late child refused but never killed"
+
+
+# ── active yt-dlp detection (M4) ───────────────────────────────────────────
+# All tests point backend.YTDLP_EXE / YTDLP_VER_F at tmp_path so the real
+# user-managed tools dir is never touched.
+def test_active_ytdlp_is_managed_for_tools_dir_copy(tmp_path, monkeypatch):
+    managed = tmp_path / "yt-dlp"
+    managed.write_bytes(b"#!/bin/sh\n")
+    monkeypatch.setattr(backend, "YTDLP_EXE", managed)
+    monkeypatch.setattr(backend, "get_tool", lambda name: str(managed))
+    assert backend._active_ytdlp_is_managed() is True
+
+
+def test_active_ytdlp_not_managed_for_path_binary(tmp_path, monkeypatch):
+    managed = tmp_path / "yt-dlp"
+    external = tmp_path / "usr" / "bin" / "yt-dlp"
+    monkeypatch.setattr(backend, "YTDLP_EXE", managed)
+    monkeypatch.setattr(backend, "get_tool", lambda name: str(external))
+    assert backend._active_ytdlp_is_managed() is False
+
+
+def test_active_ytdlp_is_managed_survives_symlink(tmp_path, monkeypatch):
+    """A symlinked resolution must not produce a false negative."""
+    real = tmp_path / "real" / "yt-dlp"
+    real.parent.mkdir()
+    real.write_bytes(b"x")
+    link = tmp_path / "link" / "yt-dlp"
+    link.parent.mkdir()
+    link.symlink_to(real)
+    monkeypatch.setattr(backend, "YTDLP_EXE", link)
+    monkeypatch.setattr(backend, "get_tool", lambda name: str(real))
+    assert backend._active_ytdlp_is_managed() is True
+
+
+def test_active_version_reads_tag_file_for_managed_copy(tmp_path, monkeypatch):
+    managed = tmp_path / "yt-dlp"
+    ver_f = tmp_path / "yt-dlp.version"
+    ver_f.write_text("2026.08.20\n")
+    monkeypatch.setattr(backend, "YTDLP_EXE", managed)
+    monkeypatch.setattr(backend, "YTDLP_VER_F", ver_f)
+    monkeypatch.setattr(backend, "get_tool", lambda name: str(managed))
+
+    def no_probe(cmd):
+        raise AssertionError("--version must not be shelled out for managed copy")
+
+    monkeypatch.setattr(backend, "get_tool_version", no_probe)
+    assert backend._ytdlp_active_version() == "2026.08.20"
+
+
+def test_active_version_probes_binary_and_ignores_stale_tag_file(tmp_path, monkeypatch):
+    """The actual M4 bug: the version reported described the tag file even
+    when a different binary was active. The tag file must NOT be consulted,
+    and the active binary must be probed via --version."""
+    monkeypatch.setattr(backend, "YTDLP_EXE", tmp_path / "yt-dlp")
+    stale = tmp_path / "yt-dlp.version"
+    stale.write_text("2020.01.01\n")
+    monkeypatch.setattr(backend, "YTDLP_VER_F", stale)
+    external = tmp_path / "opt" / "yt-dlp"
+    monkeypatch.setattr(backend, "get_tool", lambda name: str(external))
+    calls = []
+
+    def fake_probe(cmd):
+        calls.append(list(cmd))
+        return "2025.12.30"
+
+    monkeypatch.setattr(backend, "get_tool_version", fake_probe)
+    assert backend._ytdlp_active_version() == "2025.12.30"
+    assert calls, "tag file returned - active binary was never probed"
+    assert calls[0] == [str(external), "--version"]
+
+
+def test_updater_skipped_when_active_ytdlp_is_not_managed(tmp_path, monkeypatch):
+    """An external yt-dlp must short-circuit the GitHub update check: zero
+    fetches, zero downloads - asserted by call count, not exception-free."""
+    external = tmp_path / "opt" / "yt-dlp"
+    external.parent.mkdir(parents=True)
+    external.write_bytes(b"stub")
+    if sys.platform != "win32":
+        external.chmod(0o755)
+    monkeypatch.setattr(backend, "YTDLP_EXE", tmp_path / "yt-dlp")
+    monkeypatch.setattr(backend, "YTDLP_VER_F", tmp_path / "yt-dlp.version")
+    monkeypatch.setattr(backend, "get_tool", lambda name: str(external))
+    monkeypatch.setattr(backend, "get_tool_version", lambda cmd: "9.9.9")
+    events = []
+    monkeypatch.setattr(backend, "emit", lambda e: events.append(e))
+    fetch_calls = []
+
+    def no_fetch():
+        fetch_calls.append(1)
+        raise AssertionError("GitHub update check ran for an external yt-dlp")
+
+    monkeypatch.setattr(backend, "_ytdlp_fetch_latest", no_fetch)
+    download_calls = []
+
+    def no_download(url, dest):
+        download_calls.append((url, dest))
+        raise AssertionError("download ran for an external yt-dlp")
+
+    monkeypatch.setattr(backend, "_download_to", no_download)
+    backend._tools_ready.clear()
+    try:
+        backend._run_ytdlp_check()
+        released = backend._tools_ready.is_set()
+    finally:
+        backend._tools_ready.clear()
+
+    assert fetch_calls == [] and download_calls == [], \
+        "update pipeline must not run when the active yt-dlp is not managed"
+    assert released, "skip path must still set _tools_ready or the UI wedges"
+    tags = [e["ytdlp_tag"] for e in events if e.get("type") == "tools_ready"]
+    assert tags and all(t == "9.9.9" for t in tags), \
+        f"tools_ready must carry the active binary's version, got {tags}"
+
+
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="Windows has no executable bit to check")
+def test_updater_runs_when_external_ytdlp_file_not_executable(tmp_path, monkeypatch):
+    """A present but non-executable external file must NOT count as an
+    external yt-dlp: a bare isfile check matches it, so the updater would
+    skip the managed install yet nothing runnable exists."""
+    external = tmp_path / "opt" / "yt-dlp"
+    external.parent.mkdir(parents=True)
+    external.write_bytes(b"stub")
+    if sys.platform != "win32":
+        external.chmod(0o644)
+    monkeypatch.setattr(backend, "YTDLP_EXE", tmp_path / "yt-dlp")
+    monkeypatch.setattr(backend, "YTDLP_VER_F", tmp_path / "yt-dlp.version")
+    monkeypatch.setattr(backend, "get_tool", lambda name: str(external))
+    monkeypatch.setattr(backend, "get_tool_version", lambda cmd: "-")
+    events = []
+    monkeypatch.setattr(backend, "emit", lambda e: events.append(e))
+
+    def fake_fetch():
+        return ("2026.08.20", "https://example.invalid/yt-dlp")
+
+    monkeypatch.setattr(backend, "_ytdlp_fetch_latest", fake_fetch)
+    download_calls = []
+
+    def fake_download(url, dest):
+        download_calls.append((url, str(dest)))
+        with open(dest, "wb") as f:
+            f.write(b"stub")
+
+    monkeypatch.setattr(backend, "_download_to", fake_download)
+    backend._tools_ready.clear()
+    try:
+        backend._run_ytdlp_check()
+    finally:
+        backend._tools_ready.clear()
+
+    assert len(download_calls) >= 1, \
+        ("non-executable external file must trigger the managed "
+         f"download, got {download_calls}")
+
+
+def test_updater_runs_on_fresh_install_with_no_binary_anywhere(tmp_path, monkeypatch):
+    """Case 3: no bundled copy, no TOOLS_DIR copy, nothing on PATH -
+    get_tool returns its bare last-resort fallback ('yt-dlp', or
+    'yt-dlp.exe' on Windows), which is not an actual file. The updater MUST
+    still run so the first-time download bootstraps yt-dlp."""
+    monkeypatch.setattr(backend, "YTDLP_EXE", tmp_path / "yt-dlp")
+    monkeypatch.setattr(backend, "YTDLP_VER_F", tmp_path / "yt-dlp.version")
+
+    def fake_get_tool(name):
+        # Mimics get_tool's real shape: managed copy once installed,
+        # otherwise the bare name + ext fallback.
+        ext = ".exe" if sys.platform == "win32" else ""
+        if name == "yt-dlp" and backend.YTDLP_EXE.exists():
+            return str(backend.YTDLP_EXE)
+        return name + ext
+
+    monkeypatch.setattr(backend, "get_tool", fake_get_tool)
+    monkeypatch.setattr(backend, "get_tool_version", lambda cmd: "-")
+    events = []
+    monkeypatch.setattr(backend, "emit", lambda e: events.append(e))
+    fetch_calls = []
+
+    def fake_fetch():
+        fetch_calls.append(1)
+        return ("2026.08.20", "https://example.invalid/yt-dlp")
+
+    monkeypatch.setattr(backend, "_ytdlp_fetch_latest", fake_fetch)
+    download_calls = []
+
+    def fake_download(url, dest):
+        download_calls.append((url, str(dest)))
+        with open(dest, "wb") as f:
+            f.write(b"stub")
+
+    monkeypatch.setattr(backend, "_download_to", fake_download)
+    backend._tools_ready.clear()
+    try:
+        backend._run_ytdlp_check()
+        released = backend._tools_ready.is_set()
+    finally:
+        backend._tools_ready.clear()
+
+    assert fetch_calls, "updater must run when nothing is installed yet"
+    assert len(download_calls) == 1, "first-time yt-dlp download must happen"
+    assert released, "_run_ytdlp_check must set _tools_ready or the UI wedges"
+    ready_tags = [e["ytdlp_tag"] for e in events if e.get("type") == "tools_ready"]
+    assert "2026.08.20" in ready_tags, \
+        f"post-install tools_ready must carry the new tag, got {ready_tags}"
+
+
+# ── usable-binary gate (round 2: exists() is too weak) ─────────────────────
+# All tests point backend.YTDLP_EXE / YTDLP_VER_F at tmp_path so the real
+# user-managed tools dir is never touched.
+def _managed_copy(tmp_path, monkeypatch, mode):
+    """Install a managed yt-dlp stub in tmp_path with the given shape:
+    'dir' makes a directory, an int chmods a regular file."""
+    exe = tmp_path / "yt-dlp"
+    if mode == "dir":
+        exe.mkdir()
+    else:
+        exe.write_bytes(b"#!/bin/sh\n")
+        if sys.platform != "win32":
+            exe.chmod(mode)
+    monkeypatch.setattr(backend, "YTDLP_EXE", exe)
+    monkeypatch.setattr(backend, "YTDLP_VER_F", tmp_path / "yt-dlp.version")
+    # Mimics get_tool resolving to the managed copy in TOOLS_DIR.
+    monkeypatch.setattr(backend, "get_tool", lambda name: str(exe))
+    return exe
+
+
+def test_ytdlp_available_false_when_managed_path_is_directory(tmp_path, monkeypatch):
+    """A directory named yt-dlp satisfies .exists() but cannot be executed;
+    it must not count as an available binary."""
+    _managed_copy(tmp_path, monkeypatch, "dir")
+    assert backend._ytdlp_available() is False
+
+
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="Windows has no executable bit to check")
+def test_ytdlp_available_false_when_managed_file_not_executable(tmp_path, monkeypatch):
+    """A present but non-executable file must not count as available."""
+    _managed_copy(tmp_path, monkeypatch, 0o644)
+    assert backend._ytdlp_available() is False
+
+
+def test_ytdlp_available_true_for_executable_managed_copy(tmp_path, monkeypatch):
+    mode = 0o644 if sys.platform == "win32" else 0o755
+    _managed_copy(tmp_path, monkeypatch, mode)
+    assert backend._ytdlp_available() is True
+
+
+def test_updater_redownloads_when_tag_matches_but_managed_path_unusable(tmp_path, monkeypatch):
+    """The tag file agreeing with the latest release proves nothing when the
+    managed path holds a directory instead of a binary. The updater must
+    re-download instead of logging 'already up to date', and the log must say
+    Downloading, not Updating - there is no working copy being updated."""
+    exe = _managed_copy(tmp_path, monkeypatch, "dir")
+    backend.YTDLP_VER_F.write_text("2026.08.20\n")
+    assert exe.is_dir()
+    monkeypatch.setattr(backend, "get_tool_version", lambda cmd: "-")
+    events = []
+    monkeypatch.setattr(backend, "emit", lambda e: events.append(e))
+    logged = []
+    monkeypatch.setattr(backend, "log",
+                        lambda tag, msg, tone="dim": logged.append(msg))
+    monkeypatch.setattr(
+        backend, "_ytdlp_fetch_latest",
+        lambda: ("2026.08.20", "https://example.invalid/yt-dlp"))
+    download_calls = []
+
+    def fake_download(url, dest):
+        download_calls.append((url, str(dest)))
+        with open(dest, "wb") as f:
+            f.write(b"stub")
+
+    monkeypatch.setattr(backend, "_download_to", fake_download)
+    backend._tools_ready.clear()
+    try:
+        backend._run_ytdlp_check()
+    finally:
+        backend._tools_ready.clear()
+
+    assert len(download_calls) >= 1, \
+        f"unusable managed path must trigger a download, got {download_calls}"
+    assert not any("already up to date" in m for m in logged), \
+        f"must not report up-to-date over a broken binary, got {logged}"
+    assert any(m.startswith("Downloading") for m in logged), \
+        f"log must say Downloading for a unusable path, got {logged}"
+
+
+# ── subtitle selector widening (M9) ────────────────────────────────────────
+def test_sub_lang_selector_contains_bare_tag_and_variants():
+    assert backend._sub_lang_selector("en") == "en.*,en"
+
+
+def test_sub_lang_selector_is_derived_from_the_parameter():
+    assert backend._sub_lang_selector("de") == "de.*,de"
+    assert backend._sub_lang_selector("pt-br") == "pt-br.*,pt-br"
+
+
+def test_subs_fallback_glob_matches_widened_variant_filenames():
+    """The line-832 fallback glob keeps using the bare sub_lang. When the
+    widened selector hits an auto-caption track yt-dlp writes e.g.
+    Title.en-orig.srt - the glob *.en*.srt must still find that file."""
+    import fnmatch
+    pattern = "*.en*.srt"
+    assert fnmatch.fnmatch("Title.en.srt", pattern)
+    assert fnmatch.fnmatch("Title.en-orig.srt", pattern)
+    assert fnmatch.fnmatch("Title.en-US.srt", pattern)
+    assert fnmatch.fnmatch("Title.a.en.srt", pattern)
