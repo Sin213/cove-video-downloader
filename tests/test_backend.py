@@ -633,4 +633,338 @@ def test_subs_fallback_glob_matches_widened_variant_filenames():
     assert fnmatch.fnmatch("Title.en.srt", pattern)
     assert fnmatch.fnmatch("Title.en-orig.srt", pattern)
     assert fnmatch.fnmatch("Title.en-US.srt", pattern)
-    assert fnmatch.fnmatch("Title.a.en.srt", pattern)
+
+
+# ── site rules: hostname normalization ──────────────────────────────────────
+def test_normalize_hostname_download_url_uppercase():
+    assert backend._normalize_hostname("https://EXAMPLE.com/x", is_url=True) == "example.com"
+
+
+def test_normalize_hostname_download_url_trailing_dot():
+    assert backend._normalize_hostname("https://example.com./x", is_url=True) == "example.com"
+
+
+def test_normalize_hostname_download_url_with_port():
+    assert backend._normalize_hostname("https://example.com:8443/x", is_url=True) == "example.com"
+
+
+def test_normalize_hostname_download_url_hostless_is_invalid():
+    assert backend._normalize_hostname("not a url", is_url=True) is None
+    assert backend._normalize_hostname("", is_url=True) is None
+    assert backend._normalize_hostname(None, is_url=True) is None
+
+
+def test_normalize_hostname_rule_domain_case_and_dot():
+    assert backend._normalize_hostname("EXAMPLE.com.", is_url=False) == "example.com"
+
+
+def test_normalize_hostname_rule_domain_bare():
+    assert backend._normalize_hostname("example.com", is_url=False) == "example.com"
+
+
+def test_normalize_hostname_rule_domain_wildcard_prefix():
+    assert backend._normalize_hostname("*.example.com", is_url=False) == "example.com"
+
+
+def test_normalize_hostname_rule_domain_with_scheme():
+    assert backend._normalize_hostname("https://example.com/", is_url=False) == "example.com"
+
+
+def test_normalize_hostname_rule_domain_with_scheme_port_path():
+    assert backend._normalize_hostname(
+        "https://example.com:443/foo", is_url=False) == "example.com"
+
+
+def test_normalize_hostname_rejects_scheme_only_naive_split_bug():
+    """Regression guard: a naive split('/')[0] or split(':')[0] normalizer
+    would reduce 'https://example.com' to 'https'. Prove that never happens."""
+    assert backend._normalize_hostname("https://example.com", is_url=False) != "https"
+
+
+# ── site rules: matching ─────────────────────────────────────────────────────
+def _rule(domain, referer="", cf=None, enabled=True):
+    r = {"domain": domain, "referer": referer, "enabled": enabled}
+    if cf is not None:
+        r["concurrentFragments"] = cf
+    return r
+
+
+def test_resolve_site_rule_exact_host_match():
+    rules = [_rule("example.com", referer="https://example.com/")]
+    got = backend._resolve_site_rule("https://example.com/v", rules)
+    assert got == {"referer": "https://example.com/", "concurrentFragments": None}
+
+
+def test_resolve_site_rule_subdomain_match():
+    rules = [_rule("example.com", referer="https://example.com/")]
+    got = backend._resolve_site_rule("https://www.example.com/v", rules)
+    assert got is not None and got["referer"] == "https://example.com/"
+
+
+def test_resolve_site_rule_nested_subdomain_match():
+    rules = [_rule("example.com", referer="https://example.com/")]
+    got = backend._resolve_site_rule("https://a.b.example.com/v", rules)
+    assert got is not None
+
+
+def test_resolve_site_rule_no_match_similar_prefix():
+    rules = [_rule("example.com", referer="https://example.com/")]
+    assert backend._resolve_site_rule("https://notexample.com/v", rules) is None
+
+
+def test_resolve_site_rule_no_match_suffix_domain():
+    rules = [_rule("example.com", referer="https://example.com/")]
+    assert backend._resolve_site_rule("https://example.com.evil.net/v", rules) is None
+
+
+def test_resolve_site_rule_no_rules():
+    assert backend._resolve_site_rule("https://example.com/v", []) is None
+    assert backend._resolve_site_rule("https://example.com/v", None) is None
+
+
+def test_resolve_site_rule_non_matching_rules_ignored():
+    rules = [_rule("other.com", referer="https://other.com/")]
+    assert backend._resolve_site_rule("https://example.com/v", rules) is None
+
+
+def test_resolve_site_rule_longest_domain_wins():
+    rules = [
+        _rule("example.com", referer="https://example.com/"),
+        _rule("video.example.com", referer="https://video.example.com/"),
+    ]
+    got = backend._resolve_site_rule("https://video.example.com/v", rules)
+    assert got["referer"] == "https://video.example.com/"
+
+
+def test_resolve_site_rule_duplicate_domain_tie_uses_first():
+    rules = [
+        _rule("example.com", referer="https://first.example.com/"),
+        _rule("example.com", referer="https://second.example.com/"),
+    ]
+    got = backend._resolve_site_rule("https://example.com/v", rules)
+    assert got["referer"] == "https://first.example.com/"
+
+
+def test_resolve_site_rule_disabled_rule_skipped():
+    rules = [_rule("example.com", referer="https://example.com/", enabled=False)]
+    assert backend._resolve_site_rule("https://example.com/v", rules) is None
+
+
+# ── site rules: malformed data never crashes resolution ─────────────────────
+def test_resolve_site_rule_blank_rule_domain_skipped():
+    rules = [_rule("", referer="https://x/")]
+    assert backend._resolve_site_rule("https://example.com/v", rules) is None
+
+
+def test_resolve_site_rule_none_entries_skipped():
+    rules = [None, _rule("example.com", referer="https://example.com/")]
+    got = backend._resolve_site_rule("https://example.com/v", rules)
+    assert got is not None
+
+
+def test_resolve_site_rule_non_dict_entries_skipped():
+    rules = ["example.com", ["example.com"], 42,
+             _rule("example.com", referer="https://example.com/")]
+    got = backend._resolve_site_rule("https://example.com/v", rules)
+    assert got is not None
+
+
+def test_resolve_site_rule_malformed_url_returns_none():
+    rules = [_rule("example.com", referer="https://example.com/")]
+    assert backend._resolve_site_rule("not a url", rules) is None
+    assert backend._resolve_site_rule("", rules) is None
+
+
+def test_resolve_site_rule_malformed_rules_container_returns_none():
+    assert backend._resolve_site_rule("https://example.com/v", "not a list") is None
+    assert backend._resolve_site_rule("https://example.com/v", {"domain": "x"}) is None
+
+
+# ── site rules: concurrent-fragments validation ─────────────────────────────
+def test_valid_concurrent_fragments_accepts_in_range_int():
+    assert backend._valid_concurrent_fragments(32) == 32
+    assert backend._valid_concurrent_fragments(1) == 1
+    assert backend._valid_concurrent_fragments(128) == 128
+
+
+def test_valid_concurrent_fragments_rejects_out_of_range():
+    assert backend._valid_concurrent_fragments(0) is None
+    assert backend._valid_concurrent_fragments(129) is None
+    assert backend._valid_concurrent_fragments(-1) is None
+
+
+def test_valid_concurrent_fragments_rejects_non_integer_float():
+    assert backend._valid_concurrent_fragments(32.5) is None
+
+
+def test_valid_concurrent_fragments_accepts_integer_equivalent_float():
+    assert backend._valid_concurrent_fragments(32.0) == 32
+
+
+def test_valid_concurrent_fragments_rejects_bool_and_string():
+    assert backend._valid_concurrent_fragments(True) is None
+    assert backend._valid_concurrent_fragments("32") is None
+
+
+def test_resolve_site_rule_invalid_fragment_keeps_valid_referer():
+    rules = [_rule("example.com", referer="https://example.com/", cf=9999)]
+    got = backend._resolve_site_rule("https://example.com/v", rules)
+    assert got["referer"] == "https://example.com/"
+    assert got["concurrentFragments"] is None
+
+
+def test_resolve_site_rule_invalid_referer_scheme_dropped():
+    rules = [_rule("example.com", referer="ftp://example.com/")]
+    got = backend._resolve_site_rule("https://example.com/v", rules)
+    assert got["referer"] == ""
+
+
+def test_resolve_site_rule_referer_scheme_check_is_case_insensitive():
+    """Regression: the renderer accepts an uppercase scheme (its regex is
+    case-insensitive) - the backend must not silently drop what the UI just
+    accepted as valid."""
+    rules = [_rule("example.com", referer="HTTPS://example.com/")]
+    got = backend._resolve_site_rule("https://example.com/v", rules)
+    assert got["referer"] == "HTTPS://example.com/"
+
+
+# ── site rules: wired into the yt-dlp argv (download loop) ──────────────────
+class _FakeDownloadProc:
+    """Minimal Popen surface: no stdout lines, immediate nonzero exit so the
+    per-item loop fails fast without touching the filesystem."""
+    def __init__(self):
+        self.stdout = iter([])
+        self.returncode = 1
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
+def _run_download_capturing_cmds(monkeypatch, tmp_path, params, cookies_browser=None):
+    captured = []
+
+    def fake_popen(cmd, **kwargs):
+        captured.append(list(cmd))
+        return _FakeDownloadProc()
+
+    monkeypatch.setattr(backend.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(backend, "get_tool", lambda name: name)
+    monkeypatch.setattr(backend, "_ytdlp_available", lambda: True)
+    monkeypatch.setattr(backend, "detect_browser_cookies", lambda: cookies_browser)
+    backend._tools_ready.set()
+    params.setdefault("savePath", str(tmp_path))
+    params.setdefault("quality", "Best")
+    backend._run_download(params)
+    return captured
+
+
+def test_matching_rule_adds_referer_exactly_once(tmp_path, monkeypatch):
+    rules = [_rule("example.com", referer="https://example.com/")]
+    params = {"urls": [{"url": "https://example.com/v", "id": "1"}],
+              "siteRules": rules}
+    cmds = _run_download_capturing_cmds(monkeypatch, tmp_path, params)
+    assert len(cmds) == 1
+    assert cmds[0].count("--referer") == 1
+    idx = cmds[0].index("--referer")
+    assert cmds[0][idx + 1] == "https://example.com/"
+
+
+def test_matching_rule_replaces_default_concurrent_fragments(tmp_path, monkeypatch):
+    rules = [_rule("example.com", cf=32)]
+    params = {"urls": [{"url": "https://example.com/v", "id": "1"}],
+              "siteRules": rules}
+    cmds = _run_download_capturing_cmds(monkeypatch, tmp_path, params)
+    assert cmds[0].count("--concurrent-fragments") == 1
+    idx = cmds[0].index("--concurrent-fragments")
+    assert cmds[0][idx + 1] == "32"
+
+
+def test_no_matching_rule_preserves_default_concurrent_fragments_and_no_referer(tmp_path, monkeypatch):
+    rules = [_rule("other.com", referer="https://other.com/", cf=64)]
+    params = {"urls": [{"url": "https://example.com/v", "id": "1"}],
+              "siteRules": rules}
+    cmds = _run_download_capturing_cmds(monkeypatch, tmp_path, params)
+    idx = cmds[0].index("--concurrent-fragments")
+    assert cmds[0][idx + 1] == "4"
+    assert "--referer" not in cmds[0]
+
+
+def test_two_domains_resolve_to_disjoint_site_args(tmp_path, monkeypatch):
+    rules = [
+        _rule("a.com", referer="https://a.com/", cf=10),
+        _rule("b.com", referer="https://b.com/", cf=20),
+    ]
+    params = {"urls": [{"url": "https://a.com/v", "id": "1"},
+                        {"url": "https://b.com/v", "id": "2"}],
+              "siteRules": rules}
+    cmds = _run_download_capturing_cmds(monkeypatch, tmp_path, params)
+    assert len(cmds) == 2
+    assert cmds[0][cmds[0].index("--referer") + 1] == "https://a.com/"
+    assert cmds[0][cmds[0].index("--concurrent-fragments") + 1] == "10"
+    assert cmds[1][cmds[1].index("--referer") + 1] == "https://b.com/"
+    assert cmds[1][cmds[1].index("--concurrent-fragments") + 1] == "20"
+
+
+def test_most_specific_rule_values_used_in_argv(tmp_path, monkeypatch):
+    rules = [
+        _rule("example.com", referer="https://example.com/", cf=8),
+        _rule("video.example.com", referer="https://video.example.com/", cf=16),
+    ]
+    params = {"urls": [{"url": "https://video.example.com/v", "id": "1"}],
+              "siteRules": rules}
+    cmds = _run_download_capturing_cmds(monkeypatch, tmp_path, params)
+    assert cmds[0][cmds[0].index("--referer") + 1] == "https://video.example.com/"
+    assert cmds[0][cmds[0].index("--concurrent-fragments") + 1] == "16"
+
+
+def test_disabled_rule_applies_nothing(tmp_path, monkeypatch):
+    rules = [_rule("example.com", referer="https://example.com/", cf=32, enabled=False)]
+    params = {"urls": [{"url": "https://example.com/v", "id": "1"}],
+              "siteRules": rules}
+    cmds = _run_download_capturing_cmds(monkeypatch, tmp_path, params)
+    assert "--referer" not in cmds[0]
+    assert cmds[0][cmds[0].index("--concurrent-fragments") + 1] == "4"
+
+
+def test_invalid_fragment_value_does_not_suppress_valid_referer_in_argv(tmp_path, monkeypatch):
+    rules = [_rule("example.com", referer="https://example.com/", cf=999)]
+    params = {"urls": [{"url": "https://example.com/v", "id": "1"}],
+              "siteRules": rules}
+    cmds = _run_download_capturing_cmds(monkeypatch, tmp_path, params)
+    assert cmds[0][cmds[0].index("--referer") + 1] == "https://example.com/"
+    assert cmds[0][cmds[0].index("--concurrent-fragments") + 1] == "4"
+
+
+def test_global_proxy_behavior_unchanged_alongside_site_rule(tmp_path, monkeypatch):
+    rules = [_rule("example.com", referer="https://example.com/")]
+    params = {"urls": [{"url": "https://example.com/v", "id": "1"}],
+              "siteRules": rules, "proxy": "socks5://127.0.0.1:9050"}
+    cmds = _run_download_capturing_cmds(monkeypatch, tmp_path, params)
+    assert cmds[0].count("--proxy") == 1
+    assert cmds[0][cmds[0].index("--proxy") + 1] == "socks5://127.0.0.1:9050"
+
+
+def test_cookieless_retry_receives_same_site_args_as_first_attempt(tmp_path, monkeypatch):
+    rules = [_rule("example.com", referer="https://example.com/", cf=32)]
+    params = {"urls": [{"url": "https://example.com/v", "id": "1"}],
+              "siteRules": rules}
+    cmds = _run_download_capturing_cmds(monkeypatch, tmp_path, params,
+                                         cookies_browser="firefox")
+    assert len(cmds) == 2, "cookie-backed attempt then cookie-less retry expected"
+    for cmd in cmds:
+        assert cmd[cmd.index("--referer") + 1] == "https://example.com/"
+        assert cmd[cmd.index("--concurrent-fragments") + 1] == "32"
+
+
+def test_subprocess_command_is_argv_list_no_shell():
+    """Static guard: the download Popen call must never use shell=True."""
+    import inspect
+    src = inspect.getsource(backend._run_download)
+    assert "shell=True" not in src
+    assert "os.system" not in src

@@ -687,6 +687,40 @@ function LinkRow({ item, onRemove, onRedownload }) {
 }
 
 
+// ─── Site rules: pure client-side validation ───────────────────────────────
+// Mirrors the backend's normalization contract (python/backend.py
+// _normalize_hostname) closely enough to reject the same inputs, without
+// duplicating its actual matching logic - the backend re-validates
+// defensively regardless of what this sends.
+function isValidSiteRuleDomain(domain) {
+  if (typeof domain !== "string") return false;
+  let s = domain.trim();
+  if (!s || /\s/.test(s)) return false;
+  if (s.startsWith("*.")) s = s.slice(2);
+  if (!s) return false;
+  try {
+    const u = new URL(s.includes("://") ? s : "http://" + s);
+    return !!u.hostname;
+  } catch {
+    return false;
+  }
+}
+function isValidSiteRuleReferer(referer) {
+  const s = (referer || "").trim();
+  return !s || /^https?:\/\//i.test(s);
+}
+function isValidConcurrentFragments(value) {
+  if (value === "" || value == null) return true; // blank = use Cove default
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= 128;
+}
+function isSiteRuleUsable(rule) {
+  return !!rule && rule.enabled
+    && isValidSiteRuleDomain(rule.domain)
+    && isValidSiteRuleReferer(rule.referer)
+    && isValidConcurrentFragments(rule.concurrentFragments);
+}
+
 // ─── Main component ───────────────────────────────────────────────────────
 function CoveDownloader() {
   const [items,       setItems]       = React.useState([]);
@@ -709,6 +743,7 @@ function CoveDownloader() {
   const [cookiesMode, setCookiesMode] = React.useState("auto");
   const [cookiesFile, setCookiesFile] = React.useState("");
   const [proxyUrl,    setProxyUrl]    = React.useState("");
+  const [siteRules,   setSiteRules]   = React.useState([]);
   const [activeTab,      setActiveTab]      = React.useState("links");
   const [logCollapsed,   setLogCollapsed]   = React.useState(true);
   const [searchQuery,    setSearchQuery]    = React.useState("");
@@ -813,6 +848,18 @@ function CoveDownloader() {
         if (s.cookiesFile) setCookiesFile(s.cookiesFile);
         if (s.proxyUrl)    setProxyUrl(s.proxyUrl);
         if (typeof s.compress === "boolean") setCompress(s.compress);
+        if (Array.isArray(s.siteRules)) {
+          // Sanitize so a malformed persisted entry can never make a later
+          // render throw - unknown-shaped fields fall back to safe defaults.
+          setSiteRules(s.siteRules.map(r => (r && typeof r === "object") ? {
+            domain: typeof r.domain === "string" ? r.domain : "",
+            referer: typeof r.referer === "string" ? r.referer : "",
+            concurrentFragments:
+              (typeof r.concurrentFragments === "number" || typeof r.concurrentFragments === "string")
+                ? r.concurrentFragments : "",
+            enabled: !!r.enabled,
+          } : { domain: "", referer: "", concurrentFragments: "", enabled: false }));
+        }
         if (Array.isArray(s.queue) && s.queue.length) {
           setItems(s.queue.map(it => ({
             ...it,
@@ -894,12 +941,14 @@ function CoveDownloader() {
   const persistRef = React.useRef(null);
   persistRef.current = {
     savePath, quality, videoFormat, videoCodec, audioFormat,
-    subFormat, subLang, cookiesMode, cookiesFile, compress, proxyUrl,
+    subFormat, subLang, cookiesMode, cookiesFile, compress, proxyUrl, siteRules,
     queue: items.map(it => ({ id: it.id, url: it.url, state: it.state, size: it.size || 0 })),
   };
   // Deliberately excludes pct and speed: those churn constantly and are not
   // persisted anyway.
   const queueSig = items.map(it => `${it.id}|${it.url}|${it.state}|${it.size || 0}`).join("~");
+  const siteRulesSig = siteRules
+    .map(r => `${r.domain}|${r.referer}|${r.concurrentFragments}|${r.enabled}`).join("~");
 
   React.useEffect(() => {
     const t = setTimeout(() => {
@@ -907,7 +956,7 @@ function CoveDownloader() {
       try { API().settings.save(persistRef.current); } catch {}
     }, 500);
     return () => clearTimeout(t);
-  }, [savePath, quality, videoFormat, videoCodec, audioFormat, subFormat, subLang, cookiesMode, cookiesFile, compress, proxyUrl, queueSig]);
+  }, [savePath, quality, videoFormat, videoCodec, audioFormat, subFormat, subLang, cookiesMode, cookiesFile, compress, proxyUrl, queueSig, siteRulesSig]);
 
   // ── Link management ───────────────────────────────────────────────────
   const addUrls = (text) => {
@@ -1062,6 +1111,13 @@ function CoveDownloader() {
         subLang,
         cookies: cookiesMode === "file" ? (cookiesFile || "none") : cookiesMode,
         proxy: proxyUrl,
+        siteRules: siteRules.filter(isSiteRuleUsable).map(r => ({
+          domain: r.domain.trim(),
+          referer: (r.referer || "").trim(),
+          concurrentFragments: r.concurrentFragments === "" || r.concurrentFragments == null
+            ? null : Number(r.concurrentFragments),
+          enabled: true,
+        })),
       });
       if (accepted === false) {
         const msg = "Backend is not running - restart the app and try again.";
@@ -1452,6 +1508,70 @@ function CoveDownloader() {
               style={S.input}
               aria-label="Proxy URL"
             />
+
+            <div style={{ height:14 }}/>
+
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom: siteRules.length ? 8 : 0 }}>
+              <label style={{ ...S.fieldLabel, marginBottom:0 }}>Site Rules</label>
+              <button
+                type="button"
+                onClick={() => setSiteRules(prev => [...prev, { domain:"", referer:"", concurrentFragments:"", enabled:true }])}
+                style={{ ...S.btn, ...S.btnGhost, padding:"4px 8px", fontSize:11.5 }}
+                aria-label="Add site rule"
+              >+ Add</button>
+            </div>
+            {siteRules.map((rule, idx) => {
+              const domainOk   = isValidSiteRuleDomain(rule.domain);
+              const refererOk  = isValidSiteRuleReferer(rule.referer);
+              const cfOk       = isValidConcurrentFragments(rule.concurrentFragments);
+              const patch = (p) => setSiteRules(prev => prev.map((r, i) => i === idx ? { ...r, ...p } : r));
+              return (
+                <div key={idx} style={{ background:"var(--field)", border:"1px solid var(--border)", borderRadius:8, padding:10, marginBottom:8 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                    <input
+                      value={rule.domain}
+                      onChange={e => patch({ domain: e.target.value })}
+                      placeholder="example.com"
+                      style={{ ...S.input, borderColor: domainOk ? undefined : "var(--danger-border)" }}
+                      aria-label={`Site rule ${idx + 1} domain`}
+                    />
+                    <div
+                      role="switch"
+                      aria-checked={!!rule.enabled}
+                      aria-label={`Site rule ${idx + 1} enabled`}
+                      tabIndex={0}
+                      onClick={() => patch({ enabled: !rule.enabled })}
+                      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); patch({ enabled: !rule.enabled }); } }}
+                      style={{ ...S.toggle(rule.enabled), cursor:"pointer", flexShrink:0 }}
+                    ><div style={S.toggleDot(rule.enabled)}/></div>
+                  </div>
+                  <label style={{ ...S.fieldLabel, fontSize:9.5 }}>Referrer</label>
+                  <input
+                    value={rule.referer}
+                    onChange={e => patch({ referer: e.target.value })}
+                    placeholder="https://example.com/"
+                    style={{ ...S.input, marginBottom:8, borderColor: refererOk ? undefined : "var(--danger-border)" }}
+                    aria-label={`Site rule ${idx + 1} referrer`}
+                  />
+                  <label style={{ ...S.fieldLabel, fontSize:9.5 }}>Concurrent fragments</label>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <input
+                      value={rule.concurrentFragments}
+                      onChange={e => patch({ concurrentFragments: e.target.value })}
+                      placeholder="4"
+                      style={{ ...S.input, flex:1, borderColor: cfOk ? undefined : "var(--danger-border)" }}
+                      aria-label={`Site rule ${idx + 1} concurrent fragments`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setSiteRules(prev => prev.filter((_, i) => i !== idx))}
+                      style={{ ...S.btn, ...S.btnDanger, padding:"6px 10px", fontSize:11.5 }}
+                      aria-label={`Delete site rule ${idx + 1}`}
+                    >Delete</button>
+                  </div>
+                </div>
+              );
+            })}
 
             <div style={{ height:14 }}/>
 

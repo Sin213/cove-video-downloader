@@ -572,6 +572,82 @@ def _sub_lang_selector(lang):
     variants such as en-US and en-orig."""
     return f"{lang}.*,{lang}"
 
+# ── site rules (typed per-domain yt-dlp overrides) ──────────────────────────
+# A rule is {"domain", "referer", "concurrentFragments", "enabled"}. These are
+# pure/defensive: no network, no subprocess, never raise - malformed stored
+# data must degrade to "no rule matched", not crash a download.
+
+def _normalize_hostname(host_source, is_url):
+    """Extract a lowercase, trailing-dot-stripped hostname from a download
+    URL (is_url=True) or a user-entered rule domain (is_url=False, which
+    tolerates bare hostnames without a scheme)."""
+    if not isinstance(host_source, str):
+        return None
+    s = host_source.strip()
+    if not s:
+        return None
+    if not is_url:
+        if s.startswith("*."):
+            s = s[2:]
+        if not s:
+            return None
+        if "://" not in s:
+            s = "//" + s
+    try:
+        host = urllib.parse.urlsplit(s).hostname
+    except ValueError:
+        return None
+    if not host:
+        return None
+    host = host.lower().rstrip(".")
+    return host or None
+
+def _valid_concurrent_fragments(value):
+    """Accept only an integer-equivalent 1..128; reject bool/float-fraction/str."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        n = value
+    elif isinstance(value, float) and value.is_integer():
+        n = int(value)
+    else:
+        return None
+    return n if 1 <= n <= 128 else None
+
+def _resolve_site_rule(url, rules):
+    """Pick the best-matching enabled rule for `url` out of `rules`, or None.
+    Longest normalized domain wins; ties keep the first list entry. Never
+    raises - any malformed rule or URL is treated as non-matching."""
+    try:
+        host = _normalize_hostname(url, is_url=True)
+        if not host or not isinstance(rules, list):
+            return None
+        best = None
+        best_len = -1
+        for rule in rules:
+            if not isinstance(rule, dict) or not rule.get("enabled"):
+                continue
+            domain = _normalize_hostname(rule.get("domain"), is_url=False)
+            if not domain:
+                continue
+            if host != domain and not host.endswith("." + domain):
+                continue
+            if len(domain) > best_len:
+                best = rule
+                best_len = len(domain)
+        if best is None:
+            return None
+        referer = best.get("referer")
+        referer = referer.strip() if isinstance(referer, str) else ""
+        if referer and not referer.lower().startswith(("http://", "https://")):
+            referer = ""
+        return {
+            "referer": referer,
+            "concurrentFragments": _valid_concurrent_fragments(best.get("concurrentFragments")),
+        }
+    except Exception:
+        return None
+
 def _run_download(params):
     global _busy
     try:
@@ -672,6 +748,8 @@ def _run_download(params):
                 break
             url     = item.get("url", "") if isinstance(item, dict) else str(item)
             item_id = item.get("id", str(i)) if isinstance(item, dict) else str(i)
+            # Resolved fresh per item so a rule never leaks across queue entries.
+            site_rule = _resolve_site_rule(url, params.get("siteRules"))
             try:
                 output_template = str(Path(output_dir) / "%(title)s.%(ext)s")
 
@@ -701,11 +779,14 @@ def _run_download(params):
                         "480p":  "bestvideo[height<=480]+bestaudio/best[height<=480]",
                         "360p":  "bestvideo[height<=360]+bestaudio/best[height<=360]",
                     }
+                    concurrent_fragments = "4"
+                    if site_rule and site_rule.get("concurrentFragments"):
+                        concurrent_fragments = str(site_rule["concurrentFragments"])
                     cmd = [
                         ytdlp_bin,
                         "-f", fmt_map.get(quality, "bestvideo+bestaudio/best"),
                         "--merge-output-format", video_fmt,
-                        "--concurrent-fragments", "4",
+                        "--concurrent-fragments", concurrent_fragments,
                         "-o", output_template,
                     ]
                     # Codec preference. yt-dlp normalizes codec strings, so
@@ -736,6 +817,8 @@ def _run_download(params):
                     cookie_args = ["--cookies-from-browser", cookies_browser]
                 if proxy_url:
                     cmd.extend(["--proxy", proxy_url])
+                if site_rule and site_rule.get("referer"):
+                    cmd.extend(["--referer", site_rule["referer"]])
 
                 # Cookie fallback. Browser/file cookies unlock private and
                 # age-gated videos, but a logged-in YouTube session pushes
