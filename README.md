@@ -11,7 +11,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-informational?style=flat-square)
-![Version](https://img.shields.io/badge/version-3.1.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-3.2.0-blue?style=flat-square)
 
 Cove Video Downloader is a thin, opinionated front-end over
 [`yt-dlp`](https://github.com/yt-dlp/yt-dlp). It picks the best quality
@@ -21,6 +21,23 @@ proxy support, and Smart Mode settings persistence are all built in.
 
 Part of the [Cove](https://github.com/Sin213?tab=repositories&q=cove) suite
 of small desktop tools.
+
+---
+
+## What's new in v3.2.0
+
+**Typed per-domain Site Rules.**
+
+- **Per-domain referer and concurrent-fragments overrides** - add a rule for
+  a specific domain (or `*.domain.com` for its subdomains) with a custom
+  referer header and/or a concurrent-fragments count (1-128). The rule only
+  applies to downloads from that domain; every other download is unaffected.
+- **New Site Rules panel** - sits between Proxy and H.265 compress in the
+  sidebar. Add, edit, disable, or delete rules inline, with live validation
+  on domain, referer, and fragment count.
+- **Safe by default** - no rules configured means zero behavior change from
+  prior versions. Disabled or deleted rules stop applying immediately.
+- Thanks to **MysteriousAeon** for suggesting this one.
 
 ---
 
@@ -224,6 +241,12 @@ configuration is already loaded.
 ### Proxy support
 Enter an HTTP, HTTPS, or SOCKS5 proxy URL in the sidebar to bypass
 geographic restrictions or ISP blocks.
+
+### Site rules
+Add a rule for a specific domain to override its referer header and/or
+concurrent-fragments count, without changing behavior for any other site.
+Useful for hosts that need a particular referer or benefit from a different
+fragment concurrency than the default.
 
 ### Optional H.265 compression
 The **Compress** checkbox hands the downloaded MP4 to HandBrakeCLI for

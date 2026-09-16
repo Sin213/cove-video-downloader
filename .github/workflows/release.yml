@@ -184,6 +184,7 @@ jobs:
       - name: Attach artifacts to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: |
             artifacts/linux-builds/*
             artifacts/windows-builds/*
