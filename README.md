@@ -11,7 +11,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-informational?style=flat-square)
-![Version](https://img.shields.io/badge/version-3.2.0-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-3.2.1-blue?style=flat-square)
 
 Cove Video Downloader is a thin, opinionated front-end over
 [`yt-dlp`](https://github.com/yt-dlp/yt-dlp). It picks the best quality
@@ -21,6 +21,25 @@ proxy support, and Smart Mode settings persistence are all built in.
 
 Part of the [Cove](https://github.com/Sin213?tab=repositories&q=cove) suite
 of small desktop tools.
+
+---
+
+## What's new in v3.2.1
+
+**Bug-fix release: YouTube downloads and first-run Windows HTTPS.**
+
+- **YouTube JavaScript challenge support** - fixed compatibility with the
+  JavaScript runtime used to solve YouTube's signature/n-challenges, so those
+  downloads work again with the bundled Electron runtime.
+- **Cookie-free YouTube downloads** - fixed HTTP 403 errors on YouTube
+  downloads made without browser cookies by no longer forcing an Android
+  client override.
+- **First-run Windows HTTPS** - fixed certificate verification failures on
+  first run on Windows. The bundled Windows Python now also loads a pinned
+  CA bundle (certifi) alongside the Windows certificate store; certificate
+  and hostname verification stay enabled.
+- **Under the hood** - improved Windows portability and reliability of the
+  automated test suite. No change to downloader settings or the UI.
 
 ---
 
