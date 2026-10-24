@@ -968,3 +968,341 @@ def test_subprocess_command_is_argv_list_no_shell():
     src = inspect.getsource(backend._run_download)
     assert "shell=True" not in src
     assert "os.system" not in src
+
+
+# Fake executable probes run on this Linux author host; Windows uses the
+# mocked platform test below for CREATE_NO_WINDOW rather than shebang files.
+def _node_fake(tmp_path, body):
+    path = tmp_path / "embedded node with spaces"
+    path.write_text(f"#!{sys.executable}\nimport os, sys, time\n"
+                    "assert os.environ.get('ELECTRON_RUN_AS_NODE') == '1'\n" + body)
+    path.chmod(0o755)
+    return str(path)
+
+
+def _probe(path, timeout=1):
+    probe = getattr(backend, "_probe_node_runtime", None)
+    assert callable(probe), "A bounded embedded Node runtime guard is required"
+    return probe(path, timeout=timeout)
+
+
+def test_backend_python39_compatibility():
+    import ast
+    from pathlib import Path
+
+    source = Path(backend.__file__).read_text()
+    tree = ast.parse(source, feature_version=(3, 9))
+    ast.parse(Path(__file__).read_text(), feature_version=(3, 9))
+    # Without postponed annotations, these expressions execute at import.
+    # Include class fields, whose annotation expressions run at class creation.
+    annotations = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.AnnAssign, ast.arg)):
+            annotations.append(node.annotation)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            annotations.append(node.returns)
+    unions = [ast.unparse(annotation) for annotation in annotations if annotation
+              and any(isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr)
+                      for node in ast.walk(annotation))]
+    assert not unions, f"Python 3.9 cannot evaluate PEP 604 annotations: {unions}"
+
+
+@pytest.mark.parametrize("output,supported,version", [
+    ("v20.18.3", False, "20.18.3"), ("21.9.0", False, "21.9.0"),
+    ("v22.0.0", True, "22.0.0"), ("22.8.1\n", True, "22.8.1"),
+    ("v24.22.0-beta.1", True, "24.22.0"),
+    ("v24.22.0\n", True, "24.22.0"),
+    ("garbage", False, None), ("", False, None),
+    pytest.param("x" * 100000, False, None, id="huge-output"),
+])
+def test_node_probe_versions(tmp_path, output, supported, version):
+    path = _node_fake(tmp_path, f"print({output!r})\n")
+    got = _probe(path)
+    assert got.supported is supported
+    assert got.version == version
+    assert got.reason
+
+
+@pytest.mark.parametrize("kind", ["missing", "not-executable", "stderr", "nonzero", "oserror"])
+def test_node_probe_rejects_invalid(tmp_path, kind):
+    path = _node_fake(tmp_path, "print('24.1.0')\n")
+    if kind == "missing":
+        os.unlink(path)
+    elif kind == "not-executable":
+        os.chmod(path, 0o644)
+    elif kind == "stderr":
+        path = _node_fake(tmp_path, "print('24.1.0', file=sys.stderr)\n")
+    elif kind == "nonzero":
+        path = _node_fake(tmp_path, "print('24.1.0'); sys.exit(1)\n")
+    else:
+        from pathlib import Path
+        Path(path).write_text("not an executable format")
+    got = _probe(path)
+    assert not got.supported
+    assert got.reason
+
+
+def test_node_probe_timeout_reaps_process(tmp_path):
+    pidfile = tmp_path / "probe.pid"
+    path = _node_fake(tmp_path, f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n")
+    start = time.monotonic()
+    result = _probe(path)
+    assert not result.supported and "timed out" in result.reason
+    assert time.monotonic() - start < 3
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pidfile.read_text()), 0)
+
+
+def test_node_probe_windows_flags(monkeypatch, tmp_path):
+    import io
+    path = _node_fake(tmp_path, "print('24.1.0')\n")
+    proc = _FakeDownloadProc()
+    proc.returncode, proc.stdout = 0, io.BytesIO(b"24.1.0\n")
+    def popen(cmd, **kw):
+        assert cmd == [path, "-p", "process.versions.node"]
+        assert kw["creationflags"] == 0x08000000
+        assert kw["env"]["ELECTRON_RUN_AS_NODE"] == "1"
+        assert kw["stdin"] == subprocess.DEVNULL
+        assert kw["stdout"] == subprocess.PIPE
+        assert kw["stderr"] == subprocess.DEVNULL
+        return proc
+    real_timer = threading.Timer
+    def timer(interval, callback):
+        assert 0 < interval <= 10
+        return real_timer(interval, callback)
+    monkeypatch.setattr(backend.sys, "platform", "win32")
+    monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(threading, "Timer", timer)
+    assert _probe(path).supported
+    assert proc.stdout.closed
+
+
+def _runtime_download(monkeypatch, tmp_path, runtime, attempts,
+                      inherited_runtime="inherited", probe_children=None, **params):
+    events, calls = [], []
+    real_popen = subprocess.Popen
+    def popen(cmd, **kwargs):
+        if cmd[0] == runtime:
+            proc = real_popen(cmd, **kwargs)
+            if probe_children is not None:
+                probe_children.append(proc)
+            return proc
+        calls.append((cmd, kwargs))
+        lines, code = attempts[min(len(calls) - 1, len(attempts) - 1)]
+        proc = _FakeDownloadProc()
+        proc.stdout, proc.returncode = iter(lines), code
+        return proc
+    if runtime is None:
+        monkeypatch.delenv("COVE_NODE_BIN", raising=False)
+    else:
+        monkeypatch.setenv("COVE_NODE_BIN", runtime)
+    if inherited_runtime is None:
+        monkeypatch.delenv("ELECTRON_RUN_AS_NODE", raising=False)
+    else:
+        monkeypatch.setenv("ELECTRON_RUN_AS_NODE", inherited_runtime)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(backend, "emit", events.append)
+    monkeypatch.setattr(backend, "get_tool", lambda name: name)
+    monkeypatch.setattr(backend, "_ytdlp_available", lambda: True)
+    backend._tools_ready.set()
+    params.setdefault("urls", [{"id": "1", "url": "https://youtube.com/watch?v=test"}])
+    params.setdefault("cookies", "none")
+    backend._run_download(dict(savePath=str(tmp_path), **params))
+    return calls, events
+
+
+@pytest.mark.parametrize("kind", ["supported", "old", "missing", "hanging", "unset", "empty"])
+@pytest.mark.parametrize("inherited", [None, "inherited"])
+def test_runtime_queue_guard(monkeypatch, tmp_path, kind, inherited):
+    counter = tmp_path / "count"
+    body = f"open({str(counter)!r}, 'a').write('x')\n"
+    body += "time.sleep(60)\n" if kind == "hanging" else f"print('{ '20.18.3' if kind == 'old' else '24.1.0' }')\n"
+    path = _node_fake(tmp_path, body)
+    if kind == "missing":
+        os.unlink(path)
+    runtime = None if kind == "unset" else "" if kind == "empty" else path
+    probe = getattr(backend, "_probe_node_runtime", None)
+    if probe:
+        monkeypatch.setattr(backend, "_probe_node_runtime", lambda p: probe(p, timeout=1))
+    calls, events = _runtime_download(monkeypatch, tmp_path, runtime, [([], 1)],
+        inherited_runtime=inherited,
+        urls=[{"id": str(i), "url": "https://youtube.com/watch?v=test"} for i in range(2)])
+    assert len(calls) == 2
+    for cmd, kw in calls:
+        assert cmd.count("--js-runtimes") == (1 if kind == "supported" else 0)
+        assert kw["env"].get("ELECTRON_RUN_AS_NODE") == ("1" if kind == "supported" else inherited)
+        if kind == "supported":
+            assert cmd[cmd.index("--js-runtimes") + 1] == f"node:{path}"
+        assert cmd.count("--remote-components") == cmd.count("ejs:github") == 1
+    assert (counter.read_text() if counter.exists() else "") == (
+        "x" if kind in ("supported", "old", "hanging") else "")
+    warnings = [e for e in events if e.get("tone") == "warn" and "runtime" in e.get("msg", "")]
+    assert len(warnings) == (1 if kind in ("old", "missing", "hanging") else 0)
+
+
+@pytest.mark.parametrize("quality,extra,prefix", [
+    ("Audio", {"audioFormat": fmt}, ["-f", "bestaudio/best", "--extract-audio", "--audio-format", fmt, "--audio-quality", "0"])
+    for fmt in ("mp3", "opus")
+] + [
+    ("Best", {}, ["-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4", "--concurrent-fragments", "4"]),
+    ("Subs", {}, ["--skip-download", "--write-subs", "--write-auto-subs", "--sub-langs", "en.*,en", "--convert-subs", "srt"]),
+])
+def test_runtime_preserves_argv(monkeypatch, tmp_path, quality, extra, prefix):
+    calls, _ = _runtime_download(monkeypatch, tmp_path, None, [([], 1)], quality=quality, **extra)
+    assert calls[0][0] == ["yt-dlp"] + prefix + ["-o", str(tmp_path / "%(title)s.%(ext)s"),
+        "--remote-components", "ejs:github", "--extractor-args",
+        "youtube:player_client=android_vr,android", "https://youtube.com/watch?v=test"]
+
+
+@pytest.mark.parametrize("warning", [
+    "WARNING: [youtube] Signature solving failed",
+    "WARNING: [youtube] n challenge solving failed. Ensure you have a supported JavaScript runtime and challenge solver script distribution installed.",
+    "WARNING: [youtube] No supported JavaScript runtime could be found. Only deno is enabled by default; to use another runtime add  --js-runtimes RUNTIME[:PATH]  to your command/config. YouTube extraction without a JS runtime has been deprecated, and some formats may be missing. See  https://github.com/yt-dlp/yt-dlp/wiki/EJS  for details on installing one",
+    "  WARNING: Challenge solver script unavailable  ",
+    "ERROR: JavaScript runtime node-20.18.3 (unsupported)",
+])
+def test_ejs_diagnostics(monkeypatch, tmp_path, warning):
+    _, events = _runtime_download(monkeypatch, tmp_path, None, [([warning], 1)])
+    err = next(e["err"] for e in events if "err" in e)
+    assert "YouTube challenge solving failed" in err
+    assert all(word in err for word in ("yt-dlp", "Cove", "GitHub", "connectivity"))
+
+
+@pytest.mark.parametrize("extra,expected", [
+    ("Could not copy cookie database", "Couldn't read browser cookies - close the browser, or pick Firefox / a cookies.txt file in Destination → Cookies."),
+    ("Sign in to confirm you're not a bot", "YouTube blocked this request - update yt-dlp, or sign in via Destination → Cookies if the video is private."),
+    ("Only images are available", "Download failed - see the log for details."),
+    ("Requested format is not available", "Download failed - see the log for details."),
+    ("WARNING: Only images are available for download.", "Download failed - see the log for details."),
+    ("ERROR: Requested format is not available.", "Download failed - see the log for details."),
+    ("[download] Destination: /tmp/challenge solver script.mp4", "Download failed - see the log for details."),
+    ("[youtube] JavaScript runtime unsupported", "Download failed - see the log for details."),
+    ("WARNING: No JS challenge solver available", "Download failed - see the log for details."),
+])
+def test_ejs_precedence_and_generic(monkeypatch, tmp_path, extra, expected):
+    lines = ["WARNING: Signature solving failed", extra] if "cookies" in expected or "blocked" in expected else [extra, "ERROR: ffmpeg failed"]
+    _, events = _runtime_download(monkeypatch, tmp_path, None, [(lines, 1)])
+    assert next(e["err"] for e in events if "err" in e) == expected
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_ejs_final_retry_decides(monkeypatch, tmp_path, code):
+    output = tmp_path / "result.mp4"
+    output.write_bytes(b"video")
+    lines = [f"[download] Destination: {output}"] if code == 0 else ["Requested format is not available"]
+    calls, events = _runtime_download(monkeypatch, tmp_path, None,
+        [(["WARNING: Signature solving failed"], 1), (lines, code)], cookies="firefox")
+    assert len(calls) == 2
+    assert calls[0][0][-3:-1] == ["--cookies-from-browser", "firefox"]
+    assert "--extractor-args" not in calls[0][0]
+    assert "--cookies-from-browser" not in calls[1][0]
+    assert "youtube:player_client=android_vr,android" in calls[1][0]
+    errors = [e["err"] for e in events if "err" in e]
+    assert errors == ([] if code == 0 else ["Download failed - see the log for details."])
+    assert events[-1]["success"] == (1 if code == 0 else 0)
+
+
+def test_ejs_rejected_runtime_diagnostic(monkeypatch, tmp_path):
+    path = _node_fake(tmp_path, "print('20.18.3')\n")
+    _, events = _runtime_download(monkeypatch, tmp_path, path, [(["WARNING: Signature solving failed"], 1)])
+    err = next(e["err"] for e in events if "err" in e)
+    assert all(word in err for word in ("bundled", "unsupported", "20.18.3", ">= 22", "update Cove"))
+
+
+def test_ejs_cookie_precedes_bot():
+    select = getattr(backend, "_download_error_message", None)
+    assert callable(select)
+    assert select(True, True, True, None) == (
+        "Couldn't read browser cookies - close the browser, "
+        "or pick Firefox / a cookies.txt file in Destination → Cookies.")
+
+
+@pytest.mark.parametrize("shutdown", [False, True])
+def test_probe_stop_shutdown_owned_child(monkeypatch, tmp_path, shutdown):
+    pidfile = tmp_path / "probe.pid"
+    path = _node_fake(tmp_path, f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n")
+    triggered, children = [], []
+    def stop():
+        deadline = time.monotonic() + 2
+        while not pidfile.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        triggered.append(pidfile.exists())
+        if shutdown:
+            backend._shutdown.set()
+        else:
+            backend._cancel.set()
+        backend._kill_children(kind=None if shutdown else "download")
+    thread = threading.Thread(target=stop)
+    start = time.monotonic()
+    thread.start()
+    try:
+        calls, events = _runtime_download(monkeypatch, tmp_path, path, [([], 1)], probe_children=children)
+    finally:
+        thread.join(timeout=3)
+    assert triggered == [True] and not thread.is_alive()
+    assert time.monotonic() - start < 2
+    assert calls == []  # No yt-dlp child or --js-runtimes after Stop.
+    assert not any(e.get("tone") == "warn" and "runtime" in e.get("msg", "") for e in events)
+    assert any(e.get("msg") == "Download cancelled." for e in events)
+    assert children and children[0].poll() is not None
+    assert children[0].stdout.closed
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pidfile.read_text()), 0)
+    assert not backend._children
+
+
+def test_probe_registration_refusal(monkeypatch, tmp_path):
+    path = _node_fake(tmp_path, "time.sleep(60)\n")
+    register = backend._register_child
+    refused, children = [], []
+    def refuse(proc, kind):
+        backend._cancel.set()
+        backend._shutdown.set()
+        result = register(proc, kind=kind)
+        refused.append(result)
+        return result
+    monkeypatch.setattr(backend, "_register_child", refuse)
+    # Keep RED bounded while the old unregistered probe sleeps.
+    probe = backend._probe_node_runtime
+    monkeypatch.setattr(backend, "_probe_node_runtime", lambda p: probe(p, timeout=1))
+    calls, events = _runtime_download(monkeypatch, tmp_path, path, [([], 1)], probe_children=children)
+    assert refused == [False]
+    assert calls == []
+    assert not any(e.get("tag") == "runtime" for e in events)
+    assert children and children[0].poll() is not None
+    assert children[0].stdout.closed
+    with pytest.raises(ProcessLookupError):
+        os.kill(children[0].pid, 0)
+    assert not backend._children
+
+
+@pytest.mark.parametrize("kind", ["sustained", "whitespace"])
+def test_probe_bounded_raw_output(tmp_path, kind):
+    pidfile = tmp_path / "output.pid"
+    body = f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
+    body += ("while True:\n print('x'*1024, flush=True); time.sleep(0.01)\n"
+             if kind == "sustained" else "print(' '*1025 + 'v24.22.0')\n")
+    path = _node_fake(tmp_path, body)
+    start = time.monotonic()
+    result = _probe(path)
+    assert not result.supported and result.reason == "output too large"
+    assert time.monotonic() - start < 0.75
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pidfile.read_text()), 0)
+    assert not backend._children
+
+
+def test_probe_rejects_relative_without_execution(monkeypatch, tmp_path):
+    marker = tmp_path / "executed"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for directory in (tmp_path, bindir):
+        path = directory / "node"
+        path.write_text(f"#!{sys.executable}\nopen({str(marker)!r}, 'a').write('executed')\nprint('24.22.0')\n")
+        path.chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", str(bindir))
+    result = _probe("node")
+    assert not result.supported and result.reason == "path is not absolute"
+    assert not marker.exists()

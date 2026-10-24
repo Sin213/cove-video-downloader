@@ -27,8 +27,9 @@
  * build loudly rather than shipping whatever arrived.
  *
  * The Electron binary itself doubles as yt-dlp's Node runtime (via
- * ELECTRON_RUN_AS_NODE=1) for YouTube EJS sig/n-challenge solving, so we
- * don't bundle a separate JS runtime.
+ * ELECTRON_RUN_AS_NODE=1) for YouTube EJS sig/n-challenge solving. Electron
+ * 44 supplies Node >= 22; the backend probes compatibility before advertising
+ * it to yt-dlp. We don't bundle a separate JS runtime.
  */
 const fs = require('node:fs');
 const path = require('node:path');

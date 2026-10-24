@@ -31,6 +31,99 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import NamedTuple, Optional
+
+# Current yt-dlp/EJS requirement: this is runtime policy, not a prediction.
+MIN_NODE_MAJOR = 22
+NODE_PROBE_TIMEOUT = 5
+
+
+class NodeRuntime(NamedTuple):
+    supported: bool
+    version: Optional[str]
+    reason: str
+
+
+def _probe_node_runtime(path, timeout=NODE_PROBE_TIMEOUT):
+    """Probe an owned child with bounded time and raw output; always reap it."""
+    proc = timer = None
+    timed_out = threading.Event()
+    try:
+        if not os.path.isabs(path):
+            return NodeRuntime(False, None, "path is not absolute")
+        if not os.path.isfile(path):
+            return NodeRuntime(False, None, "file missing")
+        if not os.access(path, os.X_OK):
+            return NodeRuntime(False, None, "file is not executable")
+        env = os.environ.copy()
+        env["ELECTRON_RUN_AS_NODE"] = "1"
+        proc = subprocess.Popen(
+            [path, "-p", "process.versions.node"], env=env,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        if not _register_child(proc, kind="download"):
+            return NodeRuntime(False, None, "probe cancelled")
+        def expire():
+            timed_out.set()
+            _kill_and_reap(proc)
+        timer = threading.Timer(min(max(timeout, 0.01), 10), expire)
+        timer.daemon = True
+        timer.start()
+        output = proc.stdout.read(1025)
+        if len(output) > 1024:
+            return NodeRuntime(False, None, "output too large")
+        proc.wait()
+        if timed_out.is_set():
+            return NodeRuntime(False, None, "probe timed out")
+        output = output.decode("utf-8").strip()
+        match = re.match(r"^v?(\d+)\.\d+\.\d+", output)
+        version = match.group(0).removeprefix("v") if match else None
+        if proc.returncode:
+            return NodeRuntime(False, version, f"probe exited {proc.returncode}")
+        if not match:
+            return NodeRuntime(False, None, "no parseable Node version")
+        if int(match.group(1)) < MIN_NODE_MAJOR:
+            return NodeRuntime(False, version, "Node version too old")
+        return NodeRuntime(True, version, "supported")
+    except Exception as exc:
+        return NodeRuntime(False, None, f"probe failed ({type(exc).__name__})")
+    finally:
+        if timer is not None:
+            timer.cancel()
+            if timer.ident is not None:
+                timer.join()
+        if proc is not None:
+            _kill_and_reap(proc)
+            _unregister_child(proc)
+            if proc.stdout:
+                try:
+                    proc.stdout.close()
+                except Exception:
+                    pass
+
+
+def _runtime_update_message(runtime):
+    version = f"Node {runtime.version}" if runtime.version else "Node version unknown"
+    return (f"Cove's bundled JavaScript runtime is unsupported ({version}; "
+            f"{runtime.reason}). YouTube needs Node >= {MIN_NODE_MAJOR}; update Cove.")
+
+
+def _download_error_message(cookie_error, bot_error, ejs_error, runtime):
+    """The final attempt's evidence decides the actionable error."""
+    if cookie_error:
+        return ("Couldn't read browser cookies - close the browser, "
+                "or pick Firefox / a cookies.txt file in Destination → Cookies.")
+    if bot_error:
+        return ("YouTube blocked this request - update yt-dlp, "
+                "or sign in via Destination → Cookies if the video is private.")
+    if ejs_error:
+        if runtime is not None and not runtime.supported:
+            return _runtime_update_message(runtime)
+        return ("YouTube challenge solving failed - update yt-dlp and Cove. "
+                "Solver scripts are fetched from GitHub; check connectivity.")
+    return "Download failed - see the log for details."
 
 # Make `ssl_context.py` importable whether we're running from the checkout
 # (python/ dir) or from an installed location (alongside backend.py).
@@ -718,6 +811,14 @@ def _run_download(params):
         # ELECTRON_RUN_AS_NODE=1 Electron behaves as plain Node, so yt-dlp
         # treats it as a regular `node` runtime.
         electron_node = os.environ.get("COVE_NODE_BIN")
+        node_runtime = _probe_node_runtime(electron_node) if electron_node else None
+        if _shutdown.is_set():
+            _cancel.set()
+        if _cancel.is_set():
+            node_runtime = electron_node = None
+        elif node_runtime is not None and not node_runtime.supported:
+            log("runtime", _runtime_update_message(node_runtime), "warn")
+            electron_node = None
         child_env = os.environ.copy()
         if electron_node:
             child_env["ELECTRON_RUN_AS_NODE"] = "1"
@@ -836,6 +937,7 @@ def _run_download(params):
                 downloaded_file = None
                 cookie_read_error = False   # browser cookie DB unreadable
                 bot_check_error   = False   # YouTube "sign in to confirm..."
+                ejs_error         = False
                 returncode        = 1
                 # Bounds the output-folder glob fallback below so it can only
                 # ever select a file this item actually produced.
@@ -848,6 +950,7 @@ def _run_download(params):
                     # explain an unrelated failure on the cookie-less retry.
                     cookie_read_error = False
                     bot_check_error   = False
+                    ejs_error         = False
                     # The android_vr/android clients dodge YouTube's bot check
                     # on public videos, but they must NOT be combined with a
                     # logged-in session. So the flag is decided per attempt off
@@ -877,6 +980,12 @@ def _run_download(params):
                             proc.terminate()
                             break
                         s = line.strip()
+                        low = s.lower()
+                        if low.startswith(("warning:", "error:")) and (any(marker in low for marker in (
+                                "signature solving failed", "n challenge solving failed",
+                                "supported javascript runtime", "challenge solver script"))
+                                or ("runtime" in low and "unsupported" in low)):
+                            ejs_error = True
                         if "[download]" in s and "%" in s:
                             prog = _parse_dl_progress(s)
                             if prog:
@@ -942,14 +1051,8 @@ def _run_download(params):
 
                 if returncode != 0:
                     fail += 1
-                    if cookie_read_error:
-                        err_msg = ("Couldn't read browser cookies - close the browser, "
-                                   "or pick Firefox / a cookies.txt file in Destination → Cookies.")
-                    elif bot_check_error:
-                        err_msg = ("YouTube blocked this request - update yt-dlp, "
-                                   "or sign in via Destination → Cookies if the video is private.")
-                    else:
-                        err_msg = "Download failed - see the log for details."
+                    err_msg = _download_error_message(
+                        cookie_read_error, bot_check_error, ejs_error, node_runtime)
                     emit({"type": "item_state", "id": item_id,
                           "state": "error", "err": err_msg})
                     log("dl", err_msg, "err")

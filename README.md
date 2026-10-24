@@ -159,10 +159,11 @@ strict semver.
   (Chromium-family browsers on Windows 10+ use app-bound encryption that
   `yt-dlp` can't always crack).
 - **YouTube signature / n-challenge solving** via the embedded Electron
-  binary running as Node (`ELECTRON_RUN_AS_NODE=1`). `yt-dlp`'s newer
-  releases require a JavaScript runtime for YouTube; rather than bundling
-  a separate ~120 MB Deno, Cove reuses the Node runtime already inside
-  Electron.
+  44 binary running as Node (`ELECTRON_RUN_AS_NODE=1`). Current yt-dlp/EJS
+  requires Node >= 22. Cove probes the embedded runtime once per queue and
+  only advertises it to yt-dlp when supported; otherwise it warns to update
+  Cove and leaves runtime discovery to yt-dlp. Solver scripts are fetched
+  from GitHub, so connectivity is also required.
 - **Self-updating** - the app checks its own GitHub releases on launch and
   offers a one-click update when a newer version is available (from
   v1.1.0).
@@ -301,7 +302,7 @@ every launch.
 
 ## Running from source
 
-Requires Node 18+ and Python 3.10+.
+Requires Node 22.12+ and Python 3.10+.
 
 ```bash
 git clone https://github.com/Sin213/cove-video-downloader.git

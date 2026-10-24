@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@babel/standalone": "^7.29.0",
-    "electron": "^33.2.0",
+    "electron": "44.9.3",
     "electron-builder": "^26.0.12",
     "geist": "^1.7.2",
     "react": "^18.3.1",
