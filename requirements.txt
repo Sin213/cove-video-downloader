@@ -1,6 +1,3 @@
-# Cove Video Downloader — Python backend dependencies.
-#
-# The backend uses only stdlib (urllib, subprocess, threading, json, ssl).
-# Modern Python on Linux/Windows finds system CA bundles automatically,
-# so we no longer vendor certifi. If you hit SSL verification errors on
-# an ancient platform, install certifi and ssl_context.py will pick it up.
+# The Windows packaged runtime ships pinned certifi for supplemental Mozilla trust.
+# Any version/hash change requires deliberate review; system trust stays additive.
+certifi==2026.10.23 ; sys_platform == "win32" --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1

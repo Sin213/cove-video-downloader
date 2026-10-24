@@ -17,6 +17,133 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
 import backend  # noqa: E402
 
 
+def _cert_error():
+    import ssl
+    error = ssl.SSLCertVerificationError(1, 'certificate verify failed')
+    error.verify_code = 20
+    error.verify_message = 'unable to get local issuer certificate'
+    return error
+
+
+@pytest.mark.parametrize('kind,expected', [
+    ('cert', 'tls_cert'), ('wrapped_cert', 'tls_cert'), ('config', 'tls_config'),
+    ('dns', 'dns'), ('timeout', 'timeout'), ('refused', 'refused'),
+    ('proxy_http', 'proxy'), ('proxy_tunnel', 'proxy'), ('offline', 'offline'),
+    ('win10051', 'offline'), ('win10065', 'offline'), ('win10050', 'offline'),
+    ('unrelated407', 'other'), ('ssl_protocol', 'tls_protocol'), ('other', 'other'),
+    ('ssl_eof', 'other'), ('reset', 'other'), ('ssl_syscall', 'other'),
+])
+def test_tls_acquisition_classification(kind, expected):
+    import errno
+    import socket
+    import ssl
+    import urllib.error
+    errors = {
+        'cert': _cert_error(), 'wrapped_cert': urllib.error.URLError(_cert_error()),
+        'config': backend.SslTrustConfigError('SSL_CERT_FILE: invalid CA'),
+        'dns': socket.gaierror(-2, 'test DNS failure'), 'timeout': TimeoutError(),
+        'refused': ConnectionRefusedError(),
+        'proxy_http': urllib.error.HTTPError('https://invalid', 407, 'Proxy Authentication Required', {}, None),
+        'proxy_tunnel': OSError('Tunnel connection failed: 403 Forbidden'),
+        'offline': OSError(errno.ENETUNREACH, 'offline'),
+        'win10051': OSError(10051, 'offline'), 'win10065': OSError(10065, 'offline'),
+        'win10050': OSError(10050, 'offline'),
+        'unrelated407': OSError(1407, 'address 10.40.7.1'),
+        'ssl_protocol': ssl.SSLError('protocol version'), 'other': ValueError('other'),
+        'ssl_eof': ssl.SSLEOFError(), 'reset': ConnectionResetError(),
+        'ssl_syscall': ssl.SSLError(ssl.SSL_ERROR_SYSCALL, 'connection reset'),
+    }
+    assert backend.classify_ytdlp_acquisition_error(errors[kind]) == expected
+
+
+def test_tls_classification_cycles_causes_context_and_precedence():
+    import urllib.error
+    cert = _cert_error()
+    outer = OSError(10051, 'offline')
+    outer.__cause__ = urllib.error.URLError(cert)
+    cert.__context__ = outer
+    assert backend.classify_ytdlp_acquisition_error(outer) == 'tls_cert'
+    cycle = RuntimeError('cycle')
+    cycle.__context__ = cycle
+    assert backend.classify_ytdlp_acquisition_error(cycle) == 'other'
+    context = RuntimeError('wrapper')
+    context.__context__ = TimeoutError()
+    assert backend.classify_ytdlp_acquisition_error(context) == 'timeout'
+
+
+@pytest.mark.parametrize('stage', ['metadata', 'download'])
+@pytest.mark.parametrize('kind', ['cert', 'config', 'network', 'protocol', 'insecure'])
+@pytest.mark.parametrize('existing', [False, True])
+def test_tls_updater_exactly_one_attempt_messages(tmp_path, monkeypatch, stage, kind, existing):
+    import json
+    import urllib.error
+    import ssl
+    exe = tmp_path / 'yt-dlp.exe'
+    if existing:
+        exe.write_bytes(b'test-only')
+        exe.chmod(0o755)
+    monkeypatch.setattr(backend, 'YTDLP_EXE', exe)
+    monkeypatch.setattr(backend, 'YTDLP_VER_F', tmp_path / 'version')
+    monkeypatch.setattr(backend, '_active_ytdlp_is_external', lambda: False)
+    monkeypatch.setattr(backend, '_ytdlp_current_tag', lambda: None)
+    monkeypatch.setattr(backend, '_ytdlp_active_version', lambda: None)
+    monkeypatch.setattr(backend, 'get_tool', lambda name: name)
+    monkeypatch.setattr(backend, 'get_tool_version', lambda *_: '-')
+    monkeypatch.setattr(backend, 'emit', lambda *_: None)
+    monkeypatch.setattr(backend, 'get_trust_diagnostic', lambda: {'sources': ['windows-system', 'bundle-missing']})
+    logs, calls = [], []
+    monkeypatch.setattr(backend, 'log', lambda tag, msg, tone='dim': logs.append(msg))
+    error = {'cert': urllib.error.URLError(_cert_error()),
+             'config': backend.SslTrustConfigError('SSL_CERT_FILE: invalid CA'),
+             'protocol': ssl.SSLError('handshake failure'),
+             'insecure': backend.InsecureRedirectError('blocked'),
+             'network': TimeoutError('test timeout')}[kind]
+
+    def fetch():
+        calls.append('metadata')
+        if stage == 'metadata':
+            raise error
+        return 'test-tag', 'https://invalid/test'
+
+    def download(*_):
+        calls.append('download')
+        raise error
+
+    monkeypatch.setattr(backend, '_ytdlp_fetch_latest', fetch)
+    monkeypatch.setattr(backend, '_download_to', download)
+    backend._tools_ready.clear()
+    try:
+        backend._run_ytdlp_check()
+        assert backend._tools_ready.is_set()
+    finally:
+        backend._tools_ready.clear()
+    assert calls == (['metadata'] if stage == 'metadata' else ['metadata', 'download'])
+    if kind == 'network':
+        assert 'Auto-update failed: test timeout' in logs
+        assert ('yt-dlp not found - check internet.' in logs) is not existing
+    else:
+        assert not any(m.startswith('Auto-update failed:') for m in logs)
+        assert 'yt-dlp not found - check internet.' not in logs
+        if kind == 'cert':
+            assert ("Cove couldn't verify the secure connection needed to download yt-dlp. "
+                    'Check your system date, certificate trust settings, or network security software. '
+                    'Certificate verification was not disabled.') in logs
+        elif kind == 'config':
+            assert any('configured CA setting' in m and 'SSL_CERT_FILE' in m for m in logs)
+        elif kind == 'protocol':
+            assert ("Cove couldn't complete the secure (TLS) connection needed to download yt-dlp. "
+                    'Check your system date, network security software, or proxy settings. '
+                    'Certificate verification was not disabled.') in logs
+        else:
+            assert ('Cove blocked an insecure (non-HTTPS) redirect while downloading yt-dlp. '
+                    'Certificate verification was not disabled.') in logs
+        details = [json.loads(m) for m in logs if m.startswith('{')]
+        expected = {'cert': 'tls_cert', 'config': 'tls_config', 'protocol': 'tls_protocol', 'insecure': 'insecure_redirect'}
+        assert len(details) == 1 and details[0]['category'] == expected[kind]
+        assert details[0]['verify_code'] == (20 if kind == 'cert' else None)
+        assert details[0]['trust']['sources'] == ['windows-system', 'bundle-missing']
+
+
 # ── _parse_srt ─────────────────────────────────────────────────────────────
 def test_parse_srt_basic():
     srt = (

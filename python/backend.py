@@ -131,7 +131,10 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from ssl_context import get_ssl_context
+from ssl_context import get_ssl_context, get_trust_diagnostic, SslTrustConfigError
+import ssl
+import socket
+import errno
 
 def _read_version():
     """Single source of truth: package.json. Falls back only if unreadable
@@ -259,18 +262,48 @@ def _ytdlp_active_version():
         return _ytdlp_current_tag()
     return get_tool_version([get_tool("yt-dlp"), "--version"])
 
+class InsecureRedirectError(Exception):
+    """Managed acquisition refused a non-HTTPS target; never contains the URL."""
+
+
+def _require_ytdlp_https(url):
+    if urllib.parse.urlsplit(url).scheme.lower() != "https":
+        raise InsecureRedirectError("Managed yt-dlp acquisition requires HTTPS")
+
+
+class _HttpsOnlyRedirect(urllib.request.HTTPRedirectHandler):
+    def http_error_302(self, req, fp, code, msg, headers):
+        location = headers.get("location") or headers.get("uri")
+        if location is not None:
+            try:
+                _require_ytdlp_https(urllib.parse.urljoin(req.full_url, location))
+            except InsecureRedirectError:
+                fp.close()
+                raise
+        return super().http_error_302(req, fp, code, msg, headers)
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
+
+
+def _open_ytdlp_url(url, timeout):
+    _require_ytdlp_https(url)
+    req = urllib.request.Request(url, headers={"User-Agent": "CoveVideoDownloader"})
+    client = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=get_ssl_context()), _HttpsOnlyRedirect())
+    return client.open(req, timeout=timeout)
+
+
 def _ytdlp_fetch_latest():
-    req = urllib.request.Request(YTDLP_API, headers={"User-Agent": "CoveVideoDownloader"})
-    with urllib.request.urlopen(req, timeout=10, context=get_ssl_context()) as r:
+    with _open_ytdlp_url(YTDLP_API, timeout=10) as r:
         data = json.loads(r.read())
     tag      = data["tag_name"]
     exe_name = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
     url      = next(a["browser_download_url"] for a in data["assets"] if a["name"] == exe_name)
+    _require_ytdlp_https(url)
     return tag, url
 
 def _download_to(url, dest):
-    req = urllib.request.Request(url, headers={"User-Agent": "CoveVideoDownloader"})
-    with urllib.request.urlopen(req, timeout=30, context=get_ssl_context()) as r, open(dest, "wb") as f:
+    with _open_ytdlp_url(url, timeout=30) as r, open(dest, "wb") as f:
         shutil.copyfileobj(r, f)
 
 
@@ -598,6 +631,62 @@ def _ytdlp_available():
 # raw "[Errno 2] No such file or directory" on a fresh install.
 _tools_ready = threading.Event()
 
+def _acquisition_errors(error):
+    """Bounded, cycle-safe traversal, including urllib's reason wrappers."""
+    pending = [(error, 0)]
+    seen = set()
+    while pending and len(seen) < 64:
+        item, depth = pending.pop()
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        yield item
+        if depth < 12:
+            for name in ("reason", "__cause__", "__context__"):
+                child = getattr(item, name, None)
+                if child is not None:
+                    pending.append((child, depth + 1))
+
+
+def classify_ytdlp_acquisition_error(error):
+    """Pure classification; certificate rejection always outranks network errors."""
+    errors = list(_acquisition_errors(error))
+    if any(isinstance(e, SslTrustConfigError) for e in errors):
+        return "tls_config"
+    if any(isinstance(e, ssl.SSLCertVerificationError) for e in errors):
+        return "tls_cert"
+    if any(isinstance(e, InsecureRedirectError) for e in errors):
+        return "insecure_redirect"
+    if any((isinstance(e, urllib.error.HTTPError) and e.code == 407)
+           or (isinstance(e, OSError) and str(e).startswith("Tunnel connection failed"))
+           for e in errors):
+        return "proxy"
+    if any(isinstance(e, socket.gaierror) for e in errors):
+        return "dns"
+    if any(isinstance(e, TimeoutError) for e in errors):
+        return "timeout"
+    if any(isinstance(e, ConnectionRefusedError) for e in errors):
+        return "refused"
+    if any(getattr(e, "errno", None) in (errno.ENETUNREACH, errno.EHOSTUNREACH,
+                                        errno.ENETDOWN, 10051, 10065, 10050)
+           or getattr(e, "winerror", None) in (10051, 10065, 10050) for e in errors):
+        return "offline"
+    # EOF, syscall/reset, clean shutdown and want-read/write retain legacy behavior.
+    if any(type(e) is ssl.SSLError and e.errno in (None, ssl.SSL_ERROR_SSL) for e in errors):
+        return "tls_protocol"
+    return "other"
+
+
+def _tls_acquisition_detail(error, category):
+    cert = next((e for e in _acquisition_errors(error)
+                 if isinstance(e, ssl.SSLCertVerificationError)), None)
+    # No URLs, environment values, exception reprs, or local filenames.
+    return json.dumps({"category": category,
+                       "verify_code": getattr(cert, "verify_code", None),
+                       "verify_message": getattr(cert, "verify_message", None),
+                       "trust": get_trust_diagnostic()}, sort_keys=True)
+
+
 def _run_ytdlp_check():
     """Probe tools + auto-update yt-dlp.
 
@@ -646,11 +735,30 @@ def _run_ytdlp_check():
             _snapshot_and_emit()
         log("ready", "Ready. Paste links above to begin.", "ok")
     except Exception as e:
-        log("yt-dlp", f"Auto-update failed: {e}", "err")
+        category = classify_ytdlp_acquisition_error(e)
+        if category == "tls_cert":
+            log("yt-dlp", "Cove couldn't verify the secure connection needed to download yt-dlp. "
+                "Check your system date, certificate trust settings, or network security software. "
+                "Certificate verification was not disabled.", "err")
+        elif category == "insecure_redirect":
+            log("yt-dlp", "Cove blocked an insecure (non-HTTPS) redirect while downloading yt-dlp. "
+                "Certificate verification was not disabled.", "err")
+        elif category == "tls_protocol":
+            log("yt-dlp", "Cove couldn't complete the secure (TLS) connection needed to download yt-dlp. "
+                "Check your system date, network security software, or proxy settings. "
+                "Certificate verification was not disabled.", "err")
+        elif category == "tls_config":
+            log("yt-dlp", "Cove couldn't load the configured CA setting for the secure connection "
+                "needed to download yt-dlp. Check SSL_CERT_FILE or the supplemental certifi bundle. "
+                "Certificate verification was not disabled.", "err")
+        else:
+            log("yt-dlp", f"Auto-update failed: {e}", "err")
+        if category in ("tls_cert", "tls_config", "tls_protocol", "insecure_redirect"):
+            log("yt-dlp", _tls_acquisition_detail(e, category), "err")
         if _is_usable_binary(YTDLP_EXE):
             log("yt-dlp", "Using existing version.", "warn")
             log("ready", "Ready (update check failed).", "ok")
-        else:
+        elif category not in ("tls_cert", "tls_config", "tls_protocol", "insecure_redirect"):
             log("yt-dlp", "yt-dlp not found - check internet.", "err")
     finally:
         # Set even on failure: _ytdlp_available() is the real gate, and leaving
