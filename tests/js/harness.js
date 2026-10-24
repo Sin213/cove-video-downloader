@@ -8,6 +8,7 @@
  */
 const Module = require('node:module');
 const path = require('node:path');
+const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
 const { Readable } = require('node:stream');
 
@@ -111,24 +112,30 @@ function makeBrowserWindow(state) {
  * @param {object} opts
  * @param {string} opts.platform     value to report as process.platform
  * @param {boolean} opts.spawnFails  make spawn emit ENOENT asynchronously
+ * @param {boolean} opts.failLoad    throw during main.js IPC registration
+ * @param {'present'|'missing'} opts.interpreter simulated POSIX discovery
  * @returns harness handle
  */
 function loadMain(opts = {}) {
   const platform = opts.platform || 'linux';
-  const state = { windows: [], children: [], ipc: new Map(), events: [] };
+  const state = { windows: [], children: [], spawnCalls: [], openedPaths: [], ipc: new Map(), events: [] };
   const app = makeApp();
   const BrowserWindow = makeBrowserWindow(state);
 
   const electron = {
     app,
     BrowserWindow,
-    ipcMain: { handle: (ch, fn) => state.ipc.set(ch, fn) },
-    shell: { openPath: async () => '' },
+    ipcMain: { handle(ch, fn) {
+      if (opts.failLoad) throw new Error('forced main load failure');
+      state.ipc.set(ch, fn);
+    } },
+    shell: { openPath: async (target) => { state.openedPaths.push(target); return ''; } },
     dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
     nativeImage: { createFromPath: () => ({ isEmpty: () => true }) },
   };
 
-  const fakeSpawn = () => {
+  const fakeSpawn = (cmd, args) => {
+    state.spawnCalls.push({ cmd, args: [...args] });
     const child = new FakeChild();
     state.children.push(child);
     if (opts.spawnFails) {
@@ -143,6 +150,29 @@ function loadMain(opts = {}) {
   };
 
   const origLoad = Module._load;
+  // Only main.js sees this facade. Folder validation and all other filesystem
+  // work still use the host filesystem, even when simulating another platform.
+  const absoluteInterpreters = new Set([
+    '/usr/bin/python3', '/usr/local/bin/python3', '/opt/homebrew/bin/python3',
+  ]);
+  const discoveryFs = new Proxy(fs, {
+    get(target, key) {
+      if (key === 'accessSync') return (file, ...args) => {
+        const name = typeof file === 'string' ? path.basename(file) : '';
+        if (name === 'python3' || name === 'python') {
+          if (name === 'python3' && opts.interpreter !== 'missing') return;
+          const error = new Error(`ENOENT: ${file}`);
+          error.code = 'ENOENT';
+          throw error;
+        }
+        return target.accessSync(file, ...args);
+      };
+      if (key === 'existsSync') return (file) => (
+        absoluteInterpreters.has(file) ? opts.interpreter !== 'missing' : target.existsSync(file)
+      );
+      return Reflect.get(target, key);
+    },
+  });
   // main.js branches on process.platform inside event handlers, not only at
   // load time, so the override must outlive the require. dispose() reverts it.
   Object.defineProperty(process, 'platform', { value: platform, configurable: true });
@@ -153,6 +183,14 @@ function loadMain(opts = {}) {
     const fromMain = parent && parent.filename === MAIN;
     if (fromMain) {
       if (request === 'electron') return electron;
+      if (platform !== 'win32' && (request === 'path' || request === 'node:path')) {
+        // Absolute POSIX candidates contain '/', even on a Windows test host.
+        // Keep host path operations for actual backend and folder paths.
+        return { ...path, sep: '/' };
+      }
+      if (platform !== 'win32' && (request === 'fs' || request === 'node:fs')) {
+        return discoveryFs;
+      }
       if (request === 'node:child_process' || request === 'child_process') {
         return { ...origLoad.call(this, 'node:child_process', parent, isMain), spawn: fakeSpawn };
       }
@@ -164,6 +202,9 @@ function loadMain(opts = {}) {
   delete require.cache[MAIN];
   try {
     require(MAIN);
+  } catch (error) {
+    restorePlatform();
+    throw error;
   } finally {
     Module._load = origLoad;
     delete require.cache[MAIN];
@@ -174,7 +215,7 @@ function loadMain(opts = {}) {
   const patchWindow = (w) => { w.webContents.send = (ch, ev) => sent.push({ ch, ev }); };
 
   return {
-    app, BrowserWindow, state, sent,
+    app, BrowserWindow, state, sent, discoveryFs,
     get child() { return state.children[state.children.length - 1]; },
     get childCount() { return state.children.length; },
     get windowCount() { return state.windows.length; },

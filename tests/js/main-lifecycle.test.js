@@ -8,7 +8,14 @@
  */
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+const Module = require('node:module');
 const { loadMain, tick } = require('./harness');
+const REAL_PLATFORM = process.platform;
+const REAL_LOAD = Module._load;
+const REAL_ACCESS = fs.accessSync;
+const REAL_EXISTS = fs.existsSync;
 
 // ── C2: a missing interpreter must report, not crash ──────────────────────
 // NOTE: loadMain() overrides process.platform on EVERY call, including when it
@@ -18,12 +25,125 @@ const { loadMain, tick } = require('./harness');
 test('async spawn ENOENT is reported to the renderer, not thrown as uncaught', async (t) => {
   const h = await loadMain({ spawnFails: true }).ready();
   t.after(() => h.dispose());
+  assert.strictEqual(h.state.spawnCalls.length, 1, 'must reach the async spawn error path');
+  assert.strictEqual(h.childCount, 1);
   await tick(10);
   const down = h.sent.filter(s => s.ev && s.ev.type === 'backend_down');
   assert.strictEqual(down.length >= 1, true,
     'a missing interpreter must surface as a backend_down event');
   assert.match(down[0].ev.msg, /Python 3 was not found/i,
     'the message must tell the user what to install');
+});
+
+test('missing interpreter reports backend_down without attempting spawn', async (t) => {
+  const h = await loadMain({ interpreter: 'missing' }).ready();
+  t.after(() => h.dispose());
+  assert.strictEqual(h.childCount, 0);
+  assert.deepStrictEqual(h.state.spawnCalls, []);
+  const down = h.sent.filter(s => s.ev && s.ev.type === 'backend_down');
+  assert.strictEqual(down.length, 1);
+  assert.match(down[0].ev.msg, /Python 3 was not found/i);
+});
+
+test('present interpreter discovers python3 and passes the real backend script', async (t) => {
+  const h = await loadMain({ interpreter: 'present' }).ready();
+  t.after(() => h.dispose());
+  assert.strictEqual(h.state.spawnCalls.length, 1);
+  assert.strictEqual(path.basename(h.state.spawnCalls[0].cmd), 'python3');
+  if ((process.env.PATH || '').split(path.delimiter).some(Boolean)) {
+    assert.strictEqual(h.state.spawnCalls[0].cmd, 'python3');
+  }
+  assert.deepStrictEqual(h.state.spawnCalls[0].args,
+    [path.join(__dirname, '..', '..', 'python', 'backend.py')]);
+});
+
+test('discovery facade handles literal POSIX interpreter paths independently of the host', (t) => {
+  const absoluteCandidates = [
+    '/usr/bin/python3', '/usr/local/bin/python3', '/opt/homebrew/bin/python3',
+  ];
+  for (const interpreter of ['present', 'missing']) {
+    const h = loadMain({ interpreter });
+    t.after(() => h.dispose());
+    const facade = h.discoveryFs;
+    for (const file of [...absoluteCandidates, '/some/dir/python3']) {
+      const access = () => facade.accessSync(file, fs.constants.X_OK);
+      if (interpreter === 'present') assert.doesNotThrow(access);
+      else assert.throws(access, { code: 'ENOENT' });
+    }
+    for (const file of absoluteCandidates) {
+      assert.strictEqual(facade.existsSync(file), interpreter === 'present');
+    }
+    assert.throws(() => facade.accessSync('/usr/bin/python', fs.constants.X_OK), { code: 'ENOENT' });
+    assert.doesNotThrow(() => facade.accessSync(__filename));
+    assert.strictEqual(facade.existsSync(__filename), true);
+    assert.strictEqual(facade.existsSync('/definitely/not/a/real/path'), false);
+    h.dispose();
+  }
+});
+
+for (const searchPath of ['', '/usr/bin']) {
+  for (const interpreter of ['present', 'missing']) {
+    test(`interpreter ${interpreter} with PATH=${JSON.stringify(searchPath)}`, async (t) => {
+      const originalPath = process.env.PATH;
+      t.after(() => {
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+      });
+      process.env.PATH = searchPath;
+      const h = loadMain({ interpreter });
+      t.after(() => h.dispose());
+      await h.ready();
+      const down = h.sent.filter(s => s.ev && s.ev.type === 'backend_down');
+      if (interpreter === 'present') {
+        assert.strictEqual(h.childCount, 1);
+        assert.strictEqual(h.state.spawnCalls.length, 1);
+        assert.strictEqual(path.basename(h.state.spawnCalls[0].cmd), 'python3');
+        assert.deepStrictEqual(h.state.spawnCalls[0].args,
+          [path.join(__dirname, '..', '..', 'python', 'backend.py')]);
+        assert.strictEqual(down.length, 0);
+      } else {
+        assert.strictEqual(h.childCount, 0);
+        assert.deepStrictEqual(h.state.spawnCalls, []);
+        assert.strictEqual(down.length, 1);
+        assert.match(down[0].ev.msg, /Python 3 was not found/i);
+      }
+    });
+  }
+}
+
+test('failed main load restores platform, loader and cache before a normal load', async (t) => {
+  const main = require.resolve('../../main');
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  t.after(() => Object.defineProperty(process, 'platform', descriptor));
+  assert.strictEqual(require.cache[main], undefined);
+  assert.throws(() => loadMain({ platform: REAL_PLATFORM === 'darwin' ? 'linux' : 'darwin',
+    failLoad: true }), /forced main load failure/);
+  assert.strictEqual(process.platform, REAL_PLATFORM);
+  assert.strictEqual(Module._load, REAL_LOAD);
+  assert.strictEqual(require.cache[main], undefined);
+  const h = loadMain();
+  t.after(() => h.dispose());
+  await h.ready();
+  assert.strictEqual(h.childCount, 1);
+  assert.strictEqual(Module._load, REAL_LOAD);
+  assert.strictEqual(require.cache[main], undefined);
+});
+
+test('dispose restores the host platform and discovery never patches real fs or Module._load', (t) => {
+  for (const platform of ['linux', 'darwin']) {
+    const h = loadMain({ platform });
+    t.after(() => h.dispose());
+    assert.strictEqual(process.platform, platform);
+    assert.strictEqual(Module._load, REAL_LOAD);
+    assert.strictEqual(require('node:fs'), fs);
+    assert.strictEqual(require('fs').accessSync, REAL_ACCESS);
+    assert.strictEqual(fs.existsSync, REAL_EXISTS);
+    assert.ok(fs.statSync(__filename).isFile());
+    h.dispose();
+    assert.strictEqual(process.platform, REAL_PLATFORM);
+    assert.strictEqual(require('node:fs').accessSync, REAL_ACCESS);
+    assert.strictEqual(require('node:fs').existsSync, REAL_EXISTS);
+  }
 });
 
 test('spawn is attempted exactly once at startup', async (t) => {
@@ -229,4 +349,7 @@ test('cove:folder:open rejects a non-directory path', async (t) => {
   assert.match(await handler({}, ''), /No folder set/i);
   assert.match(await handler({}, '/definitely/not/a/real/path'), /does not exist/i);
   assert.match(await handler({}, __filename), /not a folder/i);
+  assert.deepStrictEqual(h.state.openedPaths, [], 'rejected inputs must not open any path');
+  assert.strictEqual(await handler({}, __dirname), '', 'real directories must reach shell.openPath');
+  assert.deepStrictEqual(h.state.openedPaths, [path.resolve(__dirname)]);
 });

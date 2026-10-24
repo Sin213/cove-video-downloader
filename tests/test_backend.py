@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -970,13 +971,122 @@ def test_subprocess_command_is_argv_list_no_shell():
     assert "os.system" not in src
 
 
-# Fake executable probes run on this Linux author host; Windows uses the
-# mocked platform test below for CREATE_NO_WINDOW rather than shebang files.
-def _node_fake(tmp_path, body):
-    path = tmp_path / "embedded node with spaces"
-    path.write_text(f"#!{sys.executable}\nimport os, sys, time\n"
-                    "assert os.environ.get('ELECTRON_RUN_AS_NODE') == '1'\n" + body)
+_NODE_FAKE_PATHS = set()
+_NODE_FAKE_SHEBANG = f"#!{sys.executable}\n"
+
+
+@pytest.fixture(autouse=True)
+def _node_fakes(monkeypatch):
+    """Execute only this test's generated shebang fixtures through Python on Windows.
+
+    Install before helpers capture Popen. This remains a real Popen subclass:
+    pipes, flags, environment, timeouts and the OS process handle are unchanged.
+    Linux continues to execute the shebang directly, without a Popen patch.
+    """
+    monkeypatch.setattr(sys.modules[__name__], "_NODE_FAKE_PATHS", set())
+    children = []
+    if sys.platform == "win32":
+        real_popen = subprocess.Popen
+
+        class NodeFixturePopen(real_popen):
+            def __init__(self, args, *positional, **kwargs):
+                adapted = False
+                if isinstance(args, (list, tuple)) and args:
+                    file = os.fspath(args[0])
+                    if file in _NODE_FAKE_PATHS and os.path.isfile(file):
+                        with open(file, encoding="utf-8") as source:
+                            adapted = source.readline() == _NODE_FAKE_SHEBANG
+                    if adapted:
+                        args = [sys.executable] + list(args)
+                super().__init__(args, *positional, **kwargs)
+                if adapted:
+                    children.append(self)
+
+        monkeypatch.setattr(subprocess, "Popen", NodeFixturePopen)
+    yield children
+    # Also reap on an assertion failure, so a failing test cannot leak a sleeper.
+    for child in children:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)
+        if child.stdout:
+            child.stdout.close()
+
+
+@pytest.fixture
+def node_probe_children(monkeypatch, _node_fakes):
+    """Observe real handles without changing how POSIX launches the fixture."""
+    children = []
+    register = backend._register_child
+
+    def record(proc, kind):
+        children.append(proc)
+        return register(proc, kind=kind)
+
+    monkeypatch.setattr(backend, "_register_child", record)
+    yield children
+    for child in children:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)
+
+
+def _assert_pid_gone(pid):
+    assert pid > 0
+    if sys.platform != "win32":
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+        return
+
+    # os.kill(pid, 0) is destructive on Windows. Query and wait on a real
+    # process handle instead; a terminated process may still have an open handle.
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x00100000 | 0x1000, False, pid)
+    if not handle:
+        assert ctypes.get_last_error() == 87, "only ERROR_INVALID_PARAMETER proves PID is gone"
+        return
+    try:
+        assert kernel32.WaitForSingleObject(handle, 0) == 0  # WAIT_OBJECT_0
+        code = wintypes.DWORD()
+        assert kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        assert code.value != 259  # STILL_ACTIVE
+    finally:
+        assert kernel32.CloseHandle(handle)
+
+
+def _assert_fixture_reaped(pidfile, children):
+    assert pidfile.is_file(), "fixture must have started before cleanup can pass"
+    pid = int(pidfile.read_text())
+    assert len(children) == 1
+    proc = children[0]
+    assert pid == proc.pid
+    # Observe production cleanup before poll() can reap a hidden zombie.
+    _assert_pid_gone(pid)
+    assert proc.returncode is not None
+    assert proc.stdout.closed
+    assert proc.poll() is not None
+
+
+def _node_fake(tmp_path, body, name="embedded node with spaces"):
+    path = tmp_path / name
+    marker = str(path) + ".executed"
+    path.write_text(_NODE_FAKE_SHEBANG + "import os, sys, time\n"
+                    "assert os.environ.get('ELECTRON_RUN_AS_NODE') == '1'\n"
+                    f"open({marker!r}, 'a').write('executed')\n" + body,
+                    encoding="utf-8")
     path.chmod(0o755)
+    _NODE_FAKE_PATHS.add(str(path))
     return str(path)
 
 
@@ -984,6 +1094,36 @@ def _probe(path, timeout=1):
     probe = getattr(backend, "_probe_node_runtime", None)
     assert callable(probe), "A bounded embedded Node runtime guard is required"
     return probe(path, timeout=timeout)
+
+
+@pytest.mark.parametrize("registered", [True, False])
+def test_node_fake_popen_scope(tmp_path, _node_fakes, registered):
+    path = _node_fake(tmp_path,
+        "assert sys.argv[1:] == ['fixture argument']\n"
+        "assert os.environ['COVE_TEST_LOCAL'] == 'kept'\nprint('24.1.0')\n")
+    if not registered:
+        # An identical shebang outside the per-test registry must not be adapted.
+        copy = tmp_path / "unregistered script"
+        copy.write_bytes(Path(path).read_bytes())
+        copy.chmod(0o755)
+        path = str(copy)
+    kwargs = dict(env=dict(os.environ, ELECTRON_RUN_AS_NODE="1", COVE_TEST_LOCAL="kept"),
+                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                  creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+    if sys.platform == "win32" and not registered:
+        with pytest.raises(OSError):
+            subprocess.Popen([path, "fixture argument"], **kwargs)
+        assert _node_fakes == []
+        assert not (tmp_path / "embedded node with spaces.executed").exists()
+        return
+    with subprocess.Popen([path, "fixture argument"], **kwargs) as proc:
+        stdout, stderr = proc.communicate(timeout=3)
+        assert proc.poll() == proc.returncode == 0
+        assert stdout.strip() == b"24.1.0" and stderr == b""
+        assert _node_fakes == ([proc] if sys.platform == "win32" else [])
+    assert proc.stdout.closed
+    assert (tmp_path / "embedded node with spaces.executed").read_text() == "executed"
+    _assert_pid_gone(proc.pid)
 
 
 def test_backend_python39_compatibility():
@@ -1007,50 +1147,71 @@ def test_backend_python39_compatibility():
     assert not unions, f"Python 3.9 cannot evaluate PEP 604 annotations: {unions}"
 
 
-@pytest.mark.parametrize("output,supported,version", [
-    ("v20.18.3", False, "20.18.3"), ("21.9.0", False, "21.9.0"),
-    ("v22.0.0", True, "22.0.0"), ("22.8.1\n", True, "22.8.1"),
-    ("v24.22.0-beta.1", True, "24.22.0"),
-    ("v24.22.0\n", True, "24.22.0"),
-    ("garbage", False, None), ("", False, None),
-    pytest.param("x" * 100000, False, None, id="huge-output"),
+@pytest.mark.parametrize("output,supported,version,reason", [
+    ("v20.18.3", False, "20.18.3", "Node version too old"),
+    ("21.9.0", False, "21.9.0", "Node version too old"),
+    ("v22.0.0", True, "22.0.0", "supported"),
+    ("22.8.1\n", True, "22.8.1", "supported"),
+    ("v24.22.0-beta.1", True, "24.22.0", "supported"),
+    ("v24.22.0\n", True, "24.22.0", "supported"),
+    ("garbage", False, None, "no parseable Node version"),
+    ("", False, None, "no parseable Node version"),
+    pytest.param("x" * 100000, False, None, "output too large", id="huge-output"),
 ])
-def test_node_probe_versions(tmp_path, output, supported, version):
+def test_node_probe_versions(tmp_path, output, supported, version, reason):
     path = _node_fake(tmp_path, f"print({output!r})\n")
     got = _probe(path)
     assert got.supported is supported
     assert got.version == version
-    assert got.reason
+    assert got.reason == reason
+    assert Path(path + ".executed").read_text() == "executed"
 
 
 @pytest.mark.parametrize("kind", ["missing", "not-executable", "stderr", "nonzero", "oserror"])
-def test_node_probe_rejects_invalid(tmp_path, kind):
+def test_node_probe_rejects_invalid(monkeypatch, tmp_path, kind):
     path = _node_fake(tmp_path, "print('24.1.0')\n")
     if kind == "missing":
         os.unlink(path)
     elif kind == "not-executable":
         os.chmod(path, 0o644)
+        if sys.platform == "win32":
+            real_access = os.access
+            def access(file, mode, *args, **kwargs):
+                if os.fspath(file) == path and mode == os.X_OK:
+                    return False
+                return real_access(file, mode, *args, **kwargs)
+            monkeypatch.setattr(os, "access", access)
     elif kind == "stderr":
         path = _node_fake(tmp_path, "print('24.1.0', file=sys.stderr)\n")
     elif kind == "nonzero":
         path = _node_fake(tmp_path, "print('24.1.0'); sys.exit(1)\n")
     else:
-        from pathlib import Path
         Path(path).write_text("not an executable format")
     got = _probe(path)
     assert not got.supported
-    assert got.reason
+    assert got.reason == {
+        "missing": "file missing", "not-executable": "file is not executable",
+        "stderr": "no parseable Node version", "nonzero": "probe exited 1",
+        "oserror": "probe failed (OSError)",
+    }[kind]
+    marker = Path(path + ".executed")
+    if kind in ("stderr", "nonzero"):
+        assert marker.read_text() == "executed"
+    else:
+        assert not marker.exists()
 
 
-def test_node_probe_timeout_reaps_process(tmp_path):
+def test_node_probe_timeout_reaps_process(tmp_path, node_probe_children):
     pidfile = tmp_path / "probe.pid"
     path = _node_fake(tmp_path, f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n")
     start = time.monotonic()
     result = _probe(path)
+    elapsed = time.monotonic() - start
     assert not result.supported and "timed out" in result.reason
-    assert time.monotonic() - start < 3
-    with pytest.raises(ProcessLookupError):
-        os.kill(int(pidfile.read_text()), 0)
+    assert result.reason == "probe timed out"
+    assert elapsed >= 0.8
+    assert elapsed < 3
+    _assert_fixture_reaped(pidfile, node_probe_children)
 
 
 def test_node_probe_windows_flags(monkeypatch, tmp_path):
@@ -1354,9 +1515,9 @@ def test_probe_stop_shutdown_owned_child(monkeypatch, tmp_path, shutdown):
     triggered, children = [], []
     def stop():
         deadline = time.monotonic() + 2
-        while not pidfile.exists() and time.monotonic() < deadline:
+        while (not pidfile.exists() or not pidfile.read_text().strip()) and time.monotonic() < deadline:
             time.sleep(0.01)
-        triggered.append(pidfile.exists())
+        triggered.append(pidfile.exists() and bool(pidfile.read_text().strip()))
         if shutdown:
             backend._shutdown.set()
         else:
@@ -1374,18 +1535,24 @@ def test_probe_stop_shutdown_owned_child(monkeypatch, tmp_path, shutdown):
     assert calls == []  # No yt-dlp child or --js-runtimes after Stop.
     assert not any(e.get("tone") == "warn" and "runtime" in e.get("msg", "") for e in events)
     assert any(e.get("msg") == "Download cancelled." for e in events)
-    assert children and children[0].poll() is not None
+    assert children and children[0].returncode is not None
     assert children[0].stdout.closed
-    with pytest.raises(ProcessLookupError):
-        os.kill(int(pidfile.read_text()), 0)
+    _assert_fixture_reaped(pidfile, children)
     assert not backend._children
 
 
 def test_probe_registration_refusal(monkeypatch, tmp_path):
-    path = _node_fake(tmp_path, "time.sleep(60)\n")
+    pidfile = tmp_path / "refused.pid"
+    path = _node_fake(tmp_path, f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n")
     register = backend._register_child
     refused, children = [], []
     def refuse(proc, kind):
+        # Let the real child reach its body before refusing registration, so
+        # both platforms prove cleanup of a running process, not just a spawn.
+        deadline = time.monotonic() + 2
+        while (not pidfile.exists() or not pidfile.read_text().strip()) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert pidfile.is_file()
         backend._cancel.set()
         backend._shutdown.set()
         result = register(proc, kind=kind)
@@ -1399,15 +1566,14 @@ def test_probe_registration_refusal(monkeypatch, tmp_path):
     assert refused == [False]
     assert calls == []
     assert not any(e.get("tag") == "runtime" for e in events)
-    assert children and children[0].poll() is not None
+    assert children and children[0].returncode is not None
     assert children[0].stdout.closed
-    with pytest.raises(ProcessLookupError):
-        os.kill(children[0].pid, 0)
+    _assert_fixture_reaped(pidfile, children)
     assert not backend._children
 
 
 @pytest.mark.parametrize("kind", ["sustained", "whitespace"])
-def test_probe_bounded_raw_output(tmp_path, kind):
+def test_probe_bounded_raw_output(tmp_path, kind, node_probe_children):
     pidfile = tmp_path / "output.pid"
     body = f"open({str(pidfile)!r}, 'w').write(str(os.getpid()))\n"
     body += ("while True:\n print('x'*1024, flush=True); time.sleep(0.01)\n"
@@ -1417,8 +1583,7 @@ def test_probe_bounded_raw_output(tmp_path, kind):
     result = _probe(path)
     assert not result.supported and result.reason == "output too large"
     assert time.monotonic() - start < 0.75
-    with pytest.raises(ProcessLookupError):
-        os.kill(int(pidfile.read_text()), 0)
+    _assert_fixture_reaped(pidfile, node_probe_children)
     assert not backend._children
 
 
@@ -1427,11 +1592,15 @@ def test_probe_rejects_relative_without_execution(monkeypatch, tmp_path):
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for directory in (tmp_path, bindir):
-        path = directory / "node"
-        path.write_text(f"#!{sys.executable}\nopen({str(marker)!r}, 'a').write('executed')\nprint('24.22.0')\n")
-        path.chmod(0o755)
+        _node_fake(directory,
+            f"open({str(marker)!r}, 'a').write('executed')\nprint('24.22.0')\n", name="node")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PATH", str(bindir))
     result = _probe("node")
     assert not result.supported and result.reason == "path is not absolute"
     assert not marker.exists()
+    # Prove these same fixtures are runnable when addressed absolutely.
+    for directory in (tmp_path, bindir):
+        absolute = _probe(str(directory / "node"))
+        assert absolute.supported and absolute.reason == "supported"
+    assert marker.read_text() == "executedexecuted"
