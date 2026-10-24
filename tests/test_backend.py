@@ -1151,8 +1151,7 @@ def test_runtime_queue_guard(monkeypatch, tmp_path, kind, inherited):
 def test_runtime_preserves_argv(monkeypatch, tmp_path, quality, extra, prefix):
     calls, _ = _runtime_download(monkeypatch, tmp_path, None, [([], 1)], quality=quality, **extra)
     assert calls[0][0] == ["yt-dlp"] + prefix + ["-o", str(tmp_path / "%(title)s.%(ext)s"),
-        "--remote-components", "ejs:github", "--extractor-args",
-        "youtube:player_client=android_vr,android", "https://youtube.com/watch?v=test"]
+        "--remote-components", "ejs:github", "https://youtube.com/watch?v=test"]
 
 
 @pytest.mark.parametrize("warning", [
@@ -1195,12 +1194,142 @@ def test_ejs_final_retry_decides(monkeypatch, tmp_path, code):
         [(["WARNING: Signature solving failed"], 1), (lines, code)], cookies="firefox")
     assert len(calls) == 2
     assert calls[0][0][-3:-1] == ["--cookies-from-browser", "firefox"]
-    assert "--extractor-args" not in calls[0][0]
+    for cmd, _ in calls:
+        assert "--extractor-args" not in cmd
+        assert not any("player_client" in arg for arg in cmd)
     assert "--cookies-from-browser" not in calls[1][0]
-    assert "youtube:player_client=android_vr,android" in calls[1][0]
     errors = [e["err"] for e in events if "err" in e]
     assert errors == ([] if code == 0 else ["Download failed - see the log for details."])
     assert events[-1]["success"] == (1 if code == 0 else 0)
+
+
+def _assert_default_clients(cmd):
+    assert "--extractor-args" not in cmd
+    assert not any("android" in arg or "player_client" in arg for arg in cmd)
+
+
+@pytest.mark.parametrize("error", [
+    "ERROR: unable to download video data: HTTP Error 403",
+    "ERROR: Sign in to confirm you're not a bot",
+])
+def test_default_clients_no_cookie_failure(monkeypatch, tmp_path, error):
+    calls, events = _runtime_download(monkeypatch, tmp_path, None, [([error], 1)])
+    # Already-green boundaries: one attempt and unchanged error classification.
+    assert len(calls) == 1
+    assert [e["err"] for e in events if "err" in e] == [
+        "YouTube blocked this request - update yt-dlp, "
+        "or sign in via Destination \u2192 Cookies if the video is private."]
+    _assert_default_clients(calls[0][0])
+
+
+def test_default_clients_firefox_retry(monkeypatch, tmp_path):
+    calls, events = _runtime_download(monkeypatch, tmp_path, None,
+        [(["HTTP Error 403"], 1)], cookies="firefox")
+    # Already-green boundaries: exactly one credential-free retry.
+    assert len(calls) == 2
+    first, retry = [cmd for cmd, _ in calls]
+    assert first.count("--cookies-from-browser") == first.count("firefox") == 1
+    assert first[-3:-1] == ["--cookies-from-browser", "firefox"]
+    assert "--cookies" not in first
+    assert not any(arg in retry for arg in ("--cookies", "--cookies-from-browser", "firefox"))
+    assert events[-1] == {"type": "download_complete", "success": 0, "fail": 1}
+    for cmd, _ in calls:
+        _assert_default_clients(cmd)
+
+
+def test_default_clients_cookies_file_retry(monkeypatch, tmp_path):
+    cookie_file = tmp_path / "cookies.txt"
+    cookie_file.write_text("# Netscape HTTP Cookie File\n")
+    calls, _ = _runtime_download(monkeypatch, tmp_path, None,
+        [(["HTTP Error 403"], 1)], cookies=str(cookie_file))
+    # Already-green boundaries: file source is used only on the first attempt.
+    assert len(calls) == 2
+    first, retry = [cmd for cmd, _ in calls]
+    assert first.count("--cookies") == first.count(str(cookie_file)) == 1
+    assert first[-3:-1] == ["--cookies", str(cookie_file)]
+    assert "--cookies-from-browser" not in first
+    assert not any(arg in retry for arg in ("--cookies", "--cookies-from-browser", str(cookie_file)))
+    for cmd, _ in calls:
+        _assert_default_clients(cmd)
+
+
+def test_default_clients_retry_success(monkeypatch, tmp_path):
+    output = tmp_path / "result.mp4"
+    output.write_bytes(b"video")
+    calls, events = _runtime_download(monkeypatch, tmp_path, None,
+        [(["HTTP Error 403"], 1), ([f"[download] Destination: {output}"], 0)],
+        cookies="firefox")
+    # Already-green boundaries: retry success counts and emits no error row.
+    assert len(calls) == 2
+    assert events[-1] == {"type": "download_complete", "success": 1, "fail": 0}
+    assert not any("err" in e for e in events)
+    retry = calls[1][0]
+    assert not any(arg in retry for arg in ("--cookies", "--cookies-from-browser", "firefox"))
+    _assert_default_clients(retry)
+
+
+@pytest.mark.parametrize("cookies", ["none", "firefox"])
+def test_default_clients_other_site(monkeypatch, tmp_path, cookies):
+    calls, _ = _runtime_download(monkeypatch, tmp_path, None, [([], 1)],
+        cookies=cookies, urls=[{"id": "1", "url": "https://example.com/v"}])
+    assert len(calls) == (1 if cookies == "none" else 2)  # Already-green bound.
+    for cmd, _ in calls:
+        _assert_default_clients(cmd)
+        assert not any("youtube" in arg.lower() for arg in cmd)
+
+
+def test_default_clients_multi_url_bound(monkeypatch, tmp_path):
+    urls = [{"id": str(i), "url": f"https://youtube.com/watch?v={i}"} for i in range(3)]
+    calls, events = _runtime_download(monkeypatch, tmp_path, None,
+        [(["HTTP Error 403"], 1)], urls=urls)
+    # Already-green boundaries: one call per URL, no repeated batch.
+    assert len(calls) == 3
+    assert [cmd[-1] for cmd, _ in calls] == [item["url"] for item in urls]
+    assert events[-1] == {"type": "download_complete", "success": 0, "fail": 3}
+    for cmd, _ in calls:
+        _assert_default_clients(cmd)
+
+
+@pytest.mark.parametrize("kind", ["supported", "missing", "unsupported"])
+def test_default_clients_runtime_retry(monkeypatch, tmp_path, kind):
+    runtime = None if kind == "missing" else str(tmp_path / "electron node.exe")
+    probes = []
+    def probe(path):
+        probes.append(path)
+        return backend.NodeRuntime(kind == "supported", "24.22.0" if kind == "supported"
+                                   else "20.18.3", kind)
+    monkeypatch.setattr(backend, "_probe_node_runtime", probe)
+    calls, _ = _runtime_download(monkeypatch, tmp_path, runtime,
+        [(["HTTP Error 403"], 1)], cookies="firefox")
+    # Already-green boundaries: runtime/EJS flags and environment on both attempts.
+    assert probes == ([] if runtime is None else [runtime])
+    assert len(calls) == 2
+    for cmd, kw in calls:
+        assert cmd.count("--js-runtimes") == (1 if kind == "supported" else 0)
+        if kind == "supported":
+            assert cmd.count(f"node:{runtime}") == 1
+            assert cmd[cmd.index("--js-runtimes") + 1] == f"node:{runtime}"
+        assert kw["env"]["ELECTRON_RUN_AS_NODE"] == ("1" if kind == "supported" else "inherited")
+        assert cmd.count("--remote-components") == cmd.count("ejs:github") == 1
+        assert cmd[cmd.index("--remote-components") + 1] == "ejs:github"
+        _assert_default_clients(cmd)
+
+
+def test_cookie_download_cancellation_no_retry(monkeypatch, tmp_path):
+    # Already-green boundary: cancellation during stdout streaming prevents retry.
+    def lines():
+        yield "[download] 1.0%"
+        backend._cancel.set()
+        yield "HTTP Error 403"
+    try:
+        calls, events = _runtime_download(monkeypatch, tmp_path, None,
+            [(lines(), 1)], cookies="firefox")
+        assert len(calls) == 1
+        assert any(e.get("state") == "cancelled" for e in events)
+        assert not any(e.get("state") == "error" or "err" in e for e in events)
+        assert events[-1] == {"type": "download_complete", "success": 0, "fail": 0}
+    finally:
+        backend._cancel.clear()
 
 
 def test_ejs_rejected_runtime_diagnostic(monkeypatch, tmp_path):

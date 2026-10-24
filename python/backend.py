@@ -922,10 +922,8 @@ def _run_download(params):
                     cmd.extend(["--referer", site_rule["referer"]])
 
                 # Cookie fallback. Browser/file cookies unlock private and
-                # age-gated videos, but a logged-in YouTube session pushes
-                # extraction onto the `tv` client, whose n-challenge currently
-                # fails on public videos ("Only images available"). So try WITH
-                # cookies first, then retry WITHOUT them before giving up.
+                # age-gated videos. If that attempt fails, retry once without
+                # cookies before giving up.
                 attempts = [cookie_args]
                 if cookie_args:
                     attempts.append([])
@@ -951,17 +949,9 @@ def _run_download(params):
                     cookie_read_error = False
                     bot_check_error   = False
                     ejs_error         = False
-                    # The android_vr/android clients dodge YouTube's bot check
-                    # on public videos, but they must NOT be combined with a
-                    # logged-in session. So the flag is decided per attempt off
-                    # the cookies actually in use - not off the configured
-                    # source. Getting this wrong meant a Firefox user's
-                    # cookie-less retry ran on the default web client and hit
-                    # "Sign in to confirm you're not a bot" every time.
+                    # Use yt-dlp's default client selection: forced Android
+                    # clients return HTTP 403. The retry stays credential-free.
                     run_cmd = list(cmd)
-                    if not ca:
-                        run_cmd.extend(["--extractor-args",
-                                        "youtube:player_client=android_vr,android"])
                     run_cmd += ca + [url]
 
                     proc = subprocess.Popen(
